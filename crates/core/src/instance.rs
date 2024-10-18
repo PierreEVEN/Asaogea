@@ -8,7 +8,8 @@ use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::vk::{EntryV1_0, HasBuilder};
 use vulkanalia::window as vk_window;
 use winit::window::Window;
-use crate::device::Device;
+use types::rwarc::RwArc;
+use crate::device::{Device, PhysicalDevice};
 use crate::surface::Surface;
 
 pub(crate) const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
@@ -20,7 +21,7 @@ pub struct GfxConfig {
 
 pub struct Instance {
     instance: vulkanalia::Instance,
-    surface: Surface,
+    surface: RwArc<Surface>,
     entry: Entry,
     device: Device,
 }
@@ -76,11 +77,7 @@ impl Instance {
         // Setup validation layers
         let mut debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
-            .message_type(
-                vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
-                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-            )
+            .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
             .user_callback(Some(debug_callback));
         if config.validation_layers {
             info = info.push_next(&mut debug_info);
@@ -94,14 +91,27 @@ impl Instance {
 
         let mut surface = Surface::new(&instance, window)?;
         let device = Device::new(&instance, &surface, &config)?;
-        surface.create_swapchain(&window, &device)?;
-        Ok(Self { instance, entry, device, surface })
+        let mut instance = Self { instance, entry, device, surface: RwArc::new(surface) };
+        instance.surface.write().create_or_recreate_swapchain(&instance, &window)?;
+        Ok(instance)
+    }
+
+    pub fn surface(&self) -> &RwArc<Surface> {
+        &self.surface
+    }
+
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+
+    pub fn device_mut(&mut self) -> &mut Device {
+        &mut self.device
     }
 }
 
 impl Drop for Instance {
     fn drop(&mut self) {
-        self.surface.destroy(&self.instance, self.device.ptr());
+        self.surface.write().destroy(&self, &self.device);
         self.device.destroy();
     }
 }
@@ -125,7 +135,7 @@ extern "system" fn debug_callback(
     let message = unsafe { std::ffi::CStr::from_ptr(data.message) }.to_string_lossy();
 
     if severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
-        error!("({:?}) {}", type_, message);
+        panic!("({:?}) {}", type_, message);
     } else if severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
         warn!("({:?}) {}", type_, message);
     } else if severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::INFO) {

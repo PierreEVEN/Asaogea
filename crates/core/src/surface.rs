@@ -1,25 +1,39 @@
 use anyhow::{anyhow, Error};
 use std::ops::Deref;
-use vulkanalia::vk::{CommandBuffer, DeviceV1_0, Handle, HasBuilder, Image, KhrSurfaceExtension, KhrSwapchainExtension, KhrWin32SurfaceExtension, SurfaceKHR, HINSTANCE};
-use vulkanalia::{vk, Instance};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing::info;
+use vulkanalia::vk::{CommandBuffer, CommandBufferResetFlags, DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSurfaceExtension, KhrSwapchainExtension, KhrWin32SurfaceExtension, SurfaceKHR, HINSTANCE};
+use vulkanalia::{vk};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
-use crate::device::Device;
+use types::rwarc::RwArc;
+use crate::device::{Device, SwapchainSupport};
+use crate::instance::Instance;
+
+const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 pub struct Surface {
     surface: Option<SurfaceKHR>,
     swapchain: Option<vk::SwapchainKHR>,
     swapchain_images: Vec<Image>,
     swapchain_image_views: Vec<vk::ImageView>,
+    swapchain_extent: Extent2D,
 
-    image_available_semaphore: vk::Semaphore,
-    render_finished_semaphore: vk::Semaphore,
+    image_available_semaphores: Vec<vk::Semaphore>,
+    render_finished_semaphores: Vec<vk::Semaphore>,
+    in_flight_fences: Vec<vk::Fence>,
+    images_in_flight: RwArc<Vec<vk::Fence>>,
 
-    temp_command_buffer: Vec<CommandBuffer>
+    framebuffers: Vec<vk::Framebuffer>,
+    temp_command_buffer: Vec<CommandBuffer>,
+    present_pass: Option<vk::RenderPass>,
+
+    frame: AtomicUsize,
+    resized: bool,
 }
 
 impl Surface {
-    pub fn new(instance: &Instance, window: &Window) -> Result<Self, Error> {
+    pub fn new(instance: &vulkanalia::Instance, window: &Window) -> Result<Self, Error> {
         let surface = match window.window_handle()?.as_raw() {
             RawWindowHandle::Win32(handle) => {
                 let hinstance = match handle.hinstance {
@@ -41,21 +55,34 @@ impl Surface {
             swapchain: None,
             swapchain_images: vec![],
             swapchain_image_views: vec![],
-            image_available_semaphore: Default::default(),
-            render_finished_semaphore: Default::default(),
+            swapchain_extent: Default::default(),
+            image_available_semaphores: vec![],
+            render_finished_semaphores: vec![],
+            in_flight_fences: vec![],
+            images_in_flight: RwArc::new(vec![]),
+            framebuffers: vec![],
             temp_command_buffer: vec![],
+            present_pass: None,
+            frame: AtomicUsize::new(0),
+            resized: false,
         })
     }
 
-    pub fn create_swapchain(&mut self, window: &Window, device: &Device) -> Result<(), Error> {
+    pub fn create_or_recreate_swapchain(&mut self, instance: &Instance, window: &Window) -> Result<(), Error> {
+        let device = instance.device();
+
         if self.swapchain.is_some() {
-            return Err(anyhow!("Swapchain have already been created"));
+            self.destroy_swapchain(device);
         }
-        let surface_format = device.get_swapchain_surface_format();
-        let present_mode = device.get_swapchain_present_mode();
-        let extent = device.get_swapchain_extent(window);
-        let image_count = std::cmp::min(device.capabilities().min_image_count + 1,
-                                        device.capabilities().max_image_count);
+        let surface = self.surface.expect("Surface have not been created yet !");
+
+        let swapchain_support = SwapchainSupport::get(instance, surface, *instance.device().physical_device().ptr())?;
+
+        let surface_format = Self::get_swapchain_surface_format(&swapchain_support);
+        let present_mode = Self::get_swapchain_present_mode(&swapchain_support);
+        let extent = Self::get_swapchain_extent(window, &swapchain_support);
+        let image_count = std::cmp::min(swapchain_support.capabilities.min_image_count + 1,
+                                        swapchain_support.capabilities.max_image_count);
 
         let mut queue_family_indices = vec![];
         let image_sharing_mode = if device.queue_families_indices().graphics != device.queue_families_indices().present {
@@ -65,37 +92,132 @@ impl Surface {
         } else {
             vk::SharingMode::EXCLUSIVE
         };
+        self.swapchain_extent = extent;
         let info = vk::SwapchainCreateInfoKHR::builder()
-            .surface(self.surface.expect("Surface have not been created yet !"))
+            .surface(surface)
             .min_image_count(image_count)
             .image_format(surface_format.format)
             .image_color_space(surface_format.color_space)
-            .image_extent(extent)
+            .image_extent(self.swapchain_extent)
             .image_array_layers(1)
             .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
             .image_sharing_mode(image_sharing_mode)
             .queue_family_indices(&queue_family_indices)
-            .pre_transform(device.capabilities().current_transform)
+            .pre_transform(swapchain_support.capabilities.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(present_mode)
             .clipped(true)
             .old_swapchain(vk::SwapchainKHR::null());
         let swapchain = unsafe { device.ptr().create_swapchain_khr(&info, None) }?;
         self.swapchain = Some(swapchain);
-        self.update_swapchain_images(device)?;
-
 
         let semaphore_info = vk::SemaphoreCreateInfo::builder();
-        unsafe { self.image_available_semaphore = device.ptr().create_semaphore(&semaphore_info, None)?; }
-        unsafe { self.render_finished_semaphore = device.ptr().create_semaphore(&semaphore_info, None)?; }
+        let fence_info = vk::FenceCreateInfo::builder()
+            .flags(vk::FenceCreateFlags::SIGNALED);
+        for _ in 0..MAX_FRAMES_IN_FLIGHT {
+            unsafe { self.image_available_semaphores.push(device.ptr().create_semaphore(&semaphore_info, None)?); }
+            unsafe { self.render_finished_semaphores.push(device.ptr().create_semaphore(&semaphore_info, None)?); }
+            unsafe { self.in_flight_fences.push(device.ptr().create_fence(&fence_info, None)?); }
+        }
+
+        let color_attachment = vk::AttachmentDescription::builder()
+            .format(surface_format.format)
+            .samples(vk::SampleCountFlags::_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+        let color_attachment_ref = vk::AttachmentReference::builder()
+            .attachment(0)
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        let color_attachments = &[color_attachment_ref];
+        let subpass = vk::SubpassDescription::builder()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(color_attachments);
+        let attachments = &[color_attachment];
+        let subpasses = &[subpass];
+        let info = vk::RenderPassCreateInfo::builder()
+            .attachments(attachments)
+            .subpasses(subpasses);
+
+        unsafe { self.present_pass = Some(device.ptr().create_render_pass(&info, None)?); }
+        self.update_swapchain_images(device, &swapchain_support)?;
 
         self.temp_command_buffer = device.command_pool().allocate(device, self.swapchain_images.len() as u32)?;
 
+        *self.images_in_flight.write() = self.swapchain_images
+            .iter()
+            .map(|_| vk::Fence::null())
+            .collect();
+
+        info!("Created new swapchain : {:?}", extent);
 
         Ok(())
     }
 
-    fn update_swapchain_images(&mut self, device: &Device) -> Result<(), Error> {
+    pub fn get_swapchain_extent(window: &Window, swapchain_support: &SwapchainSupport) -> vk::Extent2D {
+        if swapchain_support.capabilities.current_extent.width != u32::MAX {
+            swapchain_support.capabilities.current_extent
+        } else {
+            vk::Extent2D::builder()
+                .width(window.inner_size().width.clamp(
+                    swapchain_support.capabilities.min_image_extent.width,
+                    swapchain_support.capabilities.max_image_extent.width,
+                ))
+                .height(window.inner_size().height.clamp(
+                    swapchain_support.capabilities.min_image_extent.height,
+                    swapchain_support.capabilities.max_image_extent.height,
+                ))
+                .build()
+        }
+    }
+
+    pub fn get_swapchain_surface_format(swapchain_support: &SwapchainSupport) -> vk::SurfaceFormatKHR {
+        swapchain_support.formats
+            .iter()
+            .cloned()
+            .find(|f| {
+                f.format == vk::Format::B8G8R8A8_SRGB
+                    && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+            })
+            .unwrap_or_else(|| swapchain_support.formats[0])
+    }
+
+    pub fn get_swapchain_present_mode(swapchain_support: &SwapchainSupport) -> vk::PresentModeKHR {
+        swapchain_support.present_modes
+            .iter()
+            .cloned()
+            .find(|m| *m == vk::PresentModeKHR::MAILBOX)
+            .unwrap_or(vk::PresentModeKHR::FIFO)
+    }
+
+
+    fn destroy_swapchain(&mut self, device: &Device) {
+        unsafe { device.ptr().device_wait_idle().unwrap(); }
+
+        unsafe {
+            self.framebuffers
+                .iter()
+                .for_each(|f| device.ptr().destroy_framebuffer(*f, None));
+
+            device.command_pool().free(device, &self.temp_command_buffer);
+
+            self.swapchain_image_views
+                .iter()
+                .for_each(|v| device.ptr().destroy_image_view(*v, None));
+
+            self.swapchain_image_views.clear();
+
+            if let Some(swapchain) = self.swapchain.take() {
+                device.ptr().destroy_swapchain_khr(swapchain, None);
+                device.ptr().destroy_render_pass(self.present_pass.take().expect("This render pass is already destroyed"), None);
+            }
+        }
+    }
+
+    fn update_swapchain_images(&mut self, device: &Device, swapchain_support: &SwapchainSupport) -> Result<(), Error> {
         self.swapchain_images = unsafe { device.ptr().get_swapchain_images_khr(self.swapchain.expect("The swapchain have not been initialized yet"))? };
 
         self.swapchain_image_views = self
@@ -118,7 +240,7 @@ impl Surface {
                 let info = vk::ImageViewCreateInfo::builder()
                     .image(*i)
                     .view_type(vk::ImageViewType::_2D)
-                    .format(device.get_swapchain_surface_format().format)
+                    .format(Self::get_swapchain_surface_format(&swapchain_support).format)
                     .components(components)
                     .subresource_range(subresource_range);
 
@@ -126,19 +248,46 @@ impl Surface {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        self.framebuffers = self.swapchain_image_views
+            .iter()
+            .map(|i| {
+                let attachments = &[*i];
+                let create_info = vk::FramebufferCreateInfo::builder()
+                    .render_pass(self.present_pass.expect("Present pass have not been initialized yet"))
+                    .attachments(attachments)
+                    .width(self.swapchain_extent.width)
+                    .height(self.swapchain_extent.height)
+                    .layers(1);
+
+                unsafe { device.ptr().create_framebuffer(&create_info, None) }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(())
     }
 
-    pub fn render(&self, device: &Device) -> Result<(), Error> {
+    pub fn render(&mut self, device: &Device, window: &Window) -> Result<bool, Error> {
+        let frame = self.frame.load(Ordering::SeqCst);
         let swapchain = self.swapchain.ok_or(anyhow!("Swapchain is not valid"))?;
-        let image_index = unsafe {
-            device
-                .ptr()
-                .acquire_next_image_khr(swapchain, u64::MAX, self.image_available_semaphore, vk::Fence::null())
-        }?
-            .0 as usize;
 
-        /*
+        unsafe { device.ptr().wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?; }
+        unsafe { device.ptr().reset_fences(&[self.in_flight_fences[frame]])?; }
+
+        let result = unsafe { device.ptr().acquire_next_image_khr(swapchain, u64::MAX, self.image_available_semaphores[frame], vk::Fence::null()) };
+
+        let image_index = match result {
+            Ok((image_index, _)) => image_index as usize,
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => { return Ok(true) }
+            Err(e) => return Err(anyhow!("Failed to acquire next image : {}", e)),
+        };
+
+        if !self.images_in_flight.read()[image_index].is_null() {
+            unsafe { device.ptr().wait_for_fences(&[self.images_in_flight.read()[image_index]], true, u64::MAX)?; }
+        }
+
+        self.images_in_flight.write()[image_index] = self.in_flight_fences[frame];
+
+
         let render_area = vk::Rect2D::builder()
             .offset(vk::Offset2D::default())
             .extent(self.swapchain_extent);
@@ -148,56 +297,75 @@ impl Surface {
             },
         };
         let clear_values = &[color_clear_value];
+
+        unsafe { device.ptr().reset_command_buffer(self.temp_command_buffer[image_index], CommandBufferResetFlags::empty())?; }
+
+        let inheritance = vk::CommandBufferInheritanceInfo::builder();
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::empty()) // Optional.
+            .inheritance_info(&inheritance);
+        unsafe { device.ptr().begin_command_buffer(self.temp_command_buffer[image_index], &info)?; }
+
         let info = vk::RenderPassBeginInfo::builder()
-            .render_pass(data.render_pass)
-            .framebuffer(data.framebuffers[i])
+            .render_pass(self.present_pass.expect("Present pass have not been initialized yet"))
+            .framebuffer(self.framebuffers[image_index])
             .render_area(render_area)
             .clear_values(clear_values);
-        device.cmd_begin_render_pass(
-            *command_buffer, &info, vk::SubpassContents::INLINE);
 
-        device.cmd_end_render_pass(*command_buffer);
-        device.end_command_buffer(*command_buffer)?;
+        unsafe { device.ptr().cmd_begin_render_pass(self.temp_command_buffer[image_index], &info, vk::SubpassContents::INLINE); }
 
 
+        unsafe { device.ptr().cmd_end_render_pass(self.temp_command_buffer[image_index]); }
+        unsafe { device.ptr().end_command_buffer(self.temp_command_buffer[image_index])?; }
 
-
-*/
-
-
-
-
-
-
-
-        let wait_semaphores = &[self.image_available_semaphore];
+        let wait_semaphores = &[self.image_available_semaphores[frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = &[self.temp_command_buffer[image_index as usize]];
-        let signal_semaphores = &[self.render_finished_semaphore];
+        let command_buffers = &[self.temp_command_buffer[image_index]];
+        let signal_semaphores = &[self.render_finished_semaphores[frame]];
         let submit_info = vk::SubmitInfo::builder()
             .wait_semaphores(wait_semaphores)
             .wait_dst_stage_mask(wait_stages)
             .command_buffers(command_buffers)
             .signal_semaphores(signal_semaphores);
-        unsafe {
-            device.ptr().queue_submit(*device.graphic_queue(), &[submit_info], vk::Fence::null())?;
+
+        unsafe { device.ptr().queue_submit(*device.graphic_queue(), &[submit_info], self.in_flight_fences[frame])?; }
+
+
+        let swapchains = &[swapchain];
+        let image_indices = &[image_index as u32];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(signal_semaphores)
+            .swapchains(swapchains)
+            .image_indices(image_indices);
+
+        let result = unsafe { device.ptr().queue_present_khr(*device.present_queue(), &present_info) };
+
+        let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
+
+        if changed {
+            return Ok(true);
+        } else if let Err(e) = result {
+            return Err(anyhow!("Failed to present image : {}", e));
         }
 
-        Ok(())
+        self.frame.store((frame + 1) % MAX_FRAMES_IN_FLIGHT, Ordering::SeqCst);
+        Ok(false)
     }
 
-    pub fn destroy(&mut self, instance: &Instance, device: &vulkanalia::Device) {
+    pub fn destroy(&mut self, instance: &Instance, device: &Device) {
         unsafe {
-            unsafe { device.device_wait_idle().unwrap(); }
-            self.swapchain_image_views
+            self.destroy_swapchain(device);
+
+            self.render_finished_semaphores
                 .iter()
-                .for_each(|v| device.destroy_image_view(*v, None));
-            self.swapchain_image_views.clear();
-            if let Some(swapchain) = self.swapchain.take() {
-                device.destroy_semaphore(self.render_finished_semaphore, None);
-                device.destroy_semaphore(self.image_available_semaphore, None);
-                device.destroy_swapchain_khr(swapchain, None);
-            }
+                .for_each(|s| device.ptr().destroy_semaphore(*s, None));
+            self.image_available_semaphores
+                .iter()
+                .for_each(|s| device.ptr().destroy_semaphore(*s, None));
+            self.in_flight_fences
+                .iter()
+                .for_each(|f| device.ptr().destroy_fence(*f, None));
+
             instance.destroy_surface_khr(self.surface.take().expect("This surface is already destroyed"), None);
         }
     }

@@ -10,7 +10,7 @@ pub struct CommandPool {
 impl CommandPool {
     pub fn new(device: &vulkanalia::Device, queue_family_indices: &QueueFamilyIndices) -> Result<Self, Error> {
         let info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::empty()) // Optional.
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER) // Optional.
             .queue_family_index(queue_family_indices.graphics);
         let command_pool = unsafe { device.create_command_pool(&info, None) }?;
 
@@ -19,13 +19,17 @@ impl CommandPool {
         })
     }
 
-    pub  fn allocate(&self, device: &Device, num: u32) -> Result<Vec<CommandBuffer>, Error> {
+    pub fn allocate(&self, device: &Device, num: u32) -> Result<Vec<CommandBuffer>, Error> {
         let allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(self.command_pool.expect("Command pool is null"))
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(num);
 
         unsafe { Ok(device.ptr().allocate_command_buffers(&allocate_info)?) }
+    }
+
+    pub fn free(&self, device: &Device, command_buffers: &Vec<CommandBuffer>) {
+        unsafe { device.ptr().free_command_buffers(self.command_pool.expect("Command pool is null"), command_buffers.as_slice()); }
     }
 
     pub fn destroy(&mut self, device: &vulkanalia::Device) {

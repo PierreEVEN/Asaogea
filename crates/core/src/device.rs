@@ -12,7 +12,6 @@ use crate::surface::Surface;
 pub struct PhysicalDevice {
     physical_device: vk::PhysicalDevice,
     queue_family_indices: QueueFamilyIndices,
-    swapchain_support: SwapchainSupport,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -78,24 +77,19 @@ impl QueueFamilyIndices {
 
 #[derive(Clone, Debug)]
 pub struct SwapchainSupport {
-    capabilities: vk::SurfaceCapabilitiesKHR,
-    formats: Vec<vk::SurfaceFormatKHR>,
-    present_modes: Vec<vk::PresentModeKHR>,
+    pub capabilities: vk::SurfaceCapabilitiesKHR,
+    pub formats: Vec<vk::SurfaceFormatKHR>,
+    pub present_modes: Vec<vk::PresentModeKHR>,
 }
 impl SwapchainSupport {
-    unsafe fn get(
-        instance: &Instance,
-        surface: SurfaceKHR,
-        physical_device: vk::PhysicalDevice,
-    ) -> Result<Self, Error> {
-        Ok(Self {
-            capabilities: instance
-                .get_physical_device_surface_capabilities_khr(physical_device, surface)?,
-            formats: instance
-                .get_physical_device_surface_formats_khr(physical_device, surface)?,
-            present_modes: instance
-                .get_physical_device_surface_present_modes_khr(physical_device, surface)?,
-        })
+    pub fn get(instance: &Instance, surface: SurfaceKHR, physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
+        unsafe {
+            Ok(Self {
+                capabilities: instance.get_physical_device_surface_capabilities_khr(physical_device, surface)?,
+                formats: instance.get_physical_device_surface_formats_khr(physical_device, surface)?,
+                present_modes: instance.get_physical_device_surface_present_modes_khr(physical_device, surface)?,
+            })
+        }
     }
 }
 
@@ -105,12 +99,11 @@ impl PhysicalDevice {
             for physical_device in instance.enumerate_physical_devices()? {
                 let properties = instance.get_physical_device_properties(physical_device);
                 match Self::check_physical_device(instance, **surface, physical_device, config) {
-                    Ok((queue_family_indices, swapchain_support)) => {
+                    Ok(queue_family_indices) => {
                         info!("Selected physical device (`{}`).", properties.device_name);
                         return Ok(Self {
                             physical_device,
                             queue_family_indices,
-                            swapchain_support,
                         });
                     }
                     Err(err) => {
@@ -122,12 +115,16 @@ impl PhysicalDevice {
         Err(anyhow!("Failed to find suitable physical device."))
     }
 
+    pub fn ptr(&self) -> &vk::PhysicalDevice {
+        &self.physical_device
+    }
+
     unsafe fn check_physical_device(
         instance: &Instance,
         surface: SurfaceKHR,
         physical_device: vk::PhysicalDevice,
         config: &GfxConfig,
-    ) -> Result<(QueueFamilyIndices, SwapchainSupport), Error> {
+    ) -> Result<QueueFamilyIndices, Error> {
         let properties = instance.get_physical_device_properties(physical_device);
         if properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
             return Err(anyhow!("Only discrete GPUs are supported."));
@@ -147,54 +144,14 @@ impl PhysicalDevice {
         }
 
         if config.required_extensions.iter().all(|e| extensions.contains(e)) {
-            Ok((queue_family, swapchain_support))
+            Ok(queue_family)
         } else {
             Err(anyhow!("Missing required device extensions."))
         }
     }
 
-    pub fn get_swapchain_surface_format(&self) -> vk::SurfaceFormatKHR {
-        self.swapchain_support.formats
-            .iter()
-            .cloned()
-            .find(|f| {
-                f.format == vk::Format::B8G8R8A8_SRGB
-                    && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
-            })
-            .unwrap_or_else(|| self.swapchain_support.formats[0])
-    }
-
-    pub fn get_swapchain_present_mode(&self) -> vk::PresentModeKHR {
-        self.swapchain_support.present_modes
-            .iter()
-            .cloned()
-            .find(|m| *m == vk::PresentModeKHR::MAILBOX)
-            .unwrap_or(vk::PresentModeKHR::FIFO)
-    }
-
     pub fn queue_families_indices(&self) -> &QueueFamilyIndices {
         &self.queue_family_indices
-    }
-
-    pub fn capabilities(&self) -> &SurfaceCapabilitiesKHR {
-        &self.swapchain_support.capabilities
-    }
-
-    pub fn get_swapchain_extent(&self, window: &Window) -> vk::Extent2D {
-        if self.swapchain_support.capabilities.current_extent.width != u32::MAX {
-            self.swapchain_support.capabilities.current_extent
-        } else {
-            vk::Extent2D::builder()
-                .width(window.inner_size().width.clamp(
-                    self.swapchain_support.capabilities.min_image_extent.width,
-                    self.swapchain_support.capabilities.max_image_extent.width,
-                ))
-                .height(window.inner_size().height.clamp(
-                    self.swapchain_support.capabilities.min_image_extent.height,
-                    self.swapchain_support.capabilities.max_image_extent.height,
-                ))
-                .build()
-        }
     }
 }
 
@@ -202,6 +159,7 @@ pub struct Device {
     physical_device: PhysicalDevice,
     device: Option<vulkanalia::Device>,
     graphics_queue: Queue,
+    present_queue: Queue,
     command_pool: Option<CommandPool>,
 }
 
@@ -212,13 +170,20 @@ impl Device {
         let graphics_queue = unsafe {
             device.get_device_queue(physical_device.queue_family_indices.graphics, 0)
         };
+        let present_queue = unsafe {
+            device.get_device_queue(physical_device.queue_family_indices.present, 0)
+        };
         let command_pool = CommandPool::new(&device, physical_device.queue_families_indices())?;
 
-        Ok(Self { physical_device, device: Some(device), graphics_queue, command_pool: Some(command_pool) })
+        Ok(Self { physical_device, device: Some(device), graphics_queue, present_queue, command_pool: Some(command_pool) })
     }
 
     pub fn command_pool(&self) -> &CommandPool {
         &self.command_pool.as_ref().expect("Command pool have been destroyed")
+    }
+
+    pub fn physical_device(&self) -> &PhysicalDevice {
+        &self.physical_device
     }
 
     fn create_logical_device(
@@ -258,6 +223,10 @@ impl Device {
 
     pub fn graphic_queue(&self) -> &Queue {
         &self.graphics_queue
+    }
+
+    pub fn present_queue(&self) -> &Queue {
+        &self.present_queue
     }
 
     pub fn ptr(&self) -> &vulkanalia::Device {

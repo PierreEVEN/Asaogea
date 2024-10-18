@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use anyhow::Error;
 use tracing::error;
 use vulkanalia::vk;
@@ -56,6 +57,24 @@ impl ApplicationHandler for AppWindow {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
+                let instance = self.instance.as_mut().expect("Invalid instance");
+                let window = self.window.as_ref().expect("Invalid window");
+                let should_recreate = match instance.surface().write().render(instance.device(), window) {
+                    Ok(should_recreate) => {should_recreate}
+                    Err(err) => {
+                        error!("Failed to render frame : {}", err);
+                        false
+                    }
+                };
+                if should_recreate {
+                    match instance.surface().write().create_or_recreate_swapchain(&instance, window) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            error!("Failed to recreate swapchain : {}", err);
+                        }
+                    };
+                }
+
                 self.window.as_ref().unwrap().request_redraw();
             }
             _ => (),
