@@ -9,7 +9,7 @@ use vulkanalia::vk::{EntryV1_0, HasBuilder};
 use vulkanalia::window as vk_window;
 use winit::window::Window;
 use types::rwarc::RwArc;
-use crate::device::{Device, PhysicalDevice};
+use crate::device::{Device};
 use crate::surface::Surface;
 
 pub(crate) const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
@@ -89,9 +89,9 @@ impl Instance {
             entry.create_instance(&info, None)?
         };
 
-        let mut surface = Surface::new(&instance, window)?;
+        let surface = Surface::new(&instance, window)?;
         let device = Device::new(&instance, &surface, &config)?;
-        let mut instance = Self { instance, entry, device, surface: RwArc::new(surface) };
+        let instance = Self { instance, entry, device, surface: RwArc::new(surface) };
         instance.surface.write().create_or_recreate_swapchain(&instance, &window)?;
         Ok(instance)
     }

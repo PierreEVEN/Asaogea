@@ -8,6 +8,7 @@ use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 use types::rwarc::RwArc;
 use crate::device::{Device, SwapchainSupport};
+use crate::imgui::ImGui;
 use crate::instance::Instance;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
@@ -29,7 +30,6 @@ pub struct Surface {
     present_pass: Option<vk::RenderPass>,
 
     frame: AtomicUsize,
-    resized: bool,
 }
 
 impl Surface {
@@ -64,7 +64,6 @@ impl Surface {
             temp_command_buffer: vec![],
             present_pass: None,
             frame: AtomicUsize::new(0),
-            resized: false,
         })
     }
 
@@ -266,7 +265,7 @@ impl Surface {
         Ok(())
     }
 
-    pub fn render(&mut self, device: &Device, window: &Window) -> Result<bool, Error> {
+    pub fn render(&mut self, device: &Device) -> Result<bool, Error> {
         let frame = self.frame.load(Ordering::SeqCst);
         let swapchain = self.swapchain.ok_or(anyhow!("Swapchain is not valid"))?;
 
@@ -313,6 +312,28 @@ impl Surface {
             .clear_values(clear_values);
 
         unsafe { device.ptr().cmd_begin_render_pass(self.temp_command_buffer[image_index], &info, vk::SubpassContents::INLINE); }
+
+
+
+
+
+
+
+        let imgui = ImGui::new(device)?;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
         unsafe { device.ptr().cmd_end_render_pass(self.temp_command_buffer[image_index]); }

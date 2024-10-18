@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 types = { path = "../types" }
+shaders = { path = "../shaders" }
 
 vulkanalia = { version = "0.25.0", features = ["window", "libloading"] }
 winit = "0.30.5"

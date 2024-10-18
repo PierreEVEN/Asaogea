@@ -1,4 +1,3 @@
-use std::ops::Deref;
 use anyhow::Error;
 use tracing::error;
 use vulkanalia::vk;
@@ -61,7 +60,7 @@ impl ApplicationHandler for AppWindow {
                 if !self.minimized {
                     let instance = self.instance.as_mut().expect("Invalid instance");
                     let window = self.window.as_ref().expect("Invalid window");
-                    let should_recreate = match instance.surface().write().render(instance.device(), window) {
+                    let should_recreate = match instance.surface().write().render(instance.device()) {
                         Ok(should_recreate) => { should_recreate }
                         Err(err) => {
                             error!("Failed to render frame : {}", err);

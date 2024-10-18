@@ -1,6 +1,4 @@
 use anyhow::Error;
-use vulkanalia::vk;
-use vulkanalia::vk::HasBuilder;
 
 struct RenderPass {}
 

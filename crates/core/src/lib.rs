@@ -5,3 +5,6 @@ mod surface;
 mod options;
 mod command_buffer;
 mod render_pass;
+mod imgui;
+mod shader_module;
+mod pipeline;
