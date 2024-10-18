@@ -10,4 +10,4 @@ vulkanalia = { version = "0.25.0", features = ["window", "libloading"] }
 winit = "0.30.5"
 anyhow = "1.0.89"
 tracing = "0.1.40"
-imgui-rs = "1.47.0"
+imgui = { version = "0.12.0", features = ["docking"] }
