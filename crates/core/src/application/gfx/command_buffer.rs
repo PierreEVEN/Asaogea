@@ -1,7 +1,7 @@
 use anyhow::Error;
 use vulkanalia::vk;
 use vulkanalia::vk::{CommandBuffer, DeviceV1_0, HasBuilder};
-use crate::device::{Device, QueueFamilyIndices};
+use crate::application::gfx::device::{Device, QueueFamilyIndices};
 
 pub struct CommandPool {
     command_pool: Option<vk::CommandPool>,

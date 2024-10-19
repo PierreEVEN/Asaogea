@@ -7,10 +7,10 @@ use vulkanalia::{vk, Entry};
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::vk::{EntryV1_0, HasBuilder};
 use vulkanalia::window as vk_window;
-use winit::window::Window;
 use types::rwarc::RwArc;
-use crate::device::{Device};
-use crate::surface::Surface;
+use crate::application::gfx::device::{Device};
+use crate::application::gfx::surface::Surface;
+use crate::application::window::CtxAppWindow;
 
 pub(crate) const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
 
@@ -27,13 +27,13 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new(config: &mut GfxConfig, window: &Window) -> Result<Self, Error> {
+    pub fn new(ctx: &CtxAppWindow, config: &mut GfxConfig) -> Result<Self, Error> {
         let entry = unsafe {
             let loader = LibloadingLoader::new(LIBRARY)?;
             Entry::new(loader).map_err(|b| anyhow::anyhow!("{}", b))?
         };
         // Required extensions
-        let mut extensions = vk_window::get_required_instance_extensions(window)
+        let mut extensions = vk_window::get_required_instance_extensions(ctx.window.ptr()?)
             .iter()
             .map(|e| e.as_ptr())
             .collect::<Vec<_>>();
@@ -89,10 +89,10 @@ impl Instance {
             entry.create_instance(&info, None)?
         };
 
-        let surface = Surface::new(&instance, window)?;
+        let surface = Surface::new(&instance, ctx.window.ptr()?)?;
         let device = Device::new(&instance, &surface, &config)?;
         let instance = Self { instance, entry, device, surface: RwArc::new(surface) };
-        instance.surface.write().create_or_recreate_swapchain(&instance, &window)?;
+        instance.surface.write().create_or_recreate_swapchain(&instance, ctx.window.ptr()?)?;
         Ok(instance)
     }
 

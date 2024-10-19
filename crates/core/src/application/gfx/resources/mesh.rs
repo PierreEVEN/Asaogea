@@ -1,6 +1,7 @@
+use crate::application::gfx::resources::buffer::Buffer;
+use crate::application::gfx::instance::Instance;
 use anyhow::Error;
-use vulkanalia::{vk, Device};
-use crate::buffer::Buffer;
+use vulkanalia::vk;
 
 pub struct DynamicMesh {
     vertex_buffer: Buffer,
@@ -9,10 +10,10 @@ pub struct DynamicMesh {
 }
 
 impl DynamicMesh {
-    pub fn new(vertex_structure_size: usize, device: &Device) -> Result<Self, Error> {
+    pub fn new(vertex_structure_size: usize, instance: &Instance) -> Result<Self, Error> {
         Ok(Self {
-            vertex_buffer: Buffer::new(0, vk::BufferUsageFlags::VERTEX_BUFFER, device)?,
-            index_buffer: Buffer::new(0, vk::BufferUsageFlags::INDEX_BUFFER, device)?,
+            vertex_buffer: Buffer::new(0, vk::BufferUsageFlags::VERTEX_BUFFER, instance)?,
+            index_buffer: Buffer::new(0, vk::BufferUsageFlags::INDEX_BUFFER, instance)?,
             vertex_structure_size,
         })
     }

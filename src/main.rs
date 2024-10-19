@@ -1,10 +1,9 @@
 use anyhow::Error;
-use core::window::AppWindow;
-
+use core::engine::Engine;
+use core::options::{WindowOptions};
 
 fn main() -> Result<(), Error> {
     tracing_subscriber::fmt().init();
-    let mut window = AppWindow::default();
-    window.run()?;
-    Ok(())
+    let mut engine = Engine::new(WindowOptions { name: "Engine".to_string() })?;
+    engine.run()
 }

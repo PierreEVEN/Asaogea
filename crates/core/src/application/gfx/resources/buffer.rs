@@ -2,7 +2,7 @@ use anyhow::{anyhow, Error};
 use std::ops::Deref;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0};
 use vulkanalia::{vk, Device};
-use crate::instance::Instance;
+use crate::application::gfx::instance::Instance;
 
 pub struct Buffer {
     buffer: Option<vk::Buffer>,
@@ -12,7 +12,10 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub fn new(mut size: usize, usage: vk::BufferUsageFlags, device: &Device) -> Result<Self, Error> {
+    pub fn new(mut size: usize, usage: vk::BufferUsageFlags, instance: &Instance) -> Result<Self, Error> {
+
+        let device = instance.device();
+
         if size == 0 {
             size = 1;
         }
@@ -21,8 +24,8 @@ impl Buffer {
             .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let buffer = unsafe { device.create_buffer(&buffer_info, None)? };
-        let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+        let buffer = unsafe { device.ptr().create_buffer(&buffer_info, None)? };
+        let requirements = unsafe { device.ptr().get_buffer_memory_requirements(buffer) };
         let memory_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(requirements.size)
             .memory_type_index(Self::get_memory_type_index(
@@ -30,8 +33,8 @@ impl Buffer {
                 vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
                 requirements,
             )?);
-        let buffer_memory = unsafe { device.allocate_memory(&memory_info, None) }?;
-        unsafe { device.bind_buffer_memory(*buffer, buffer_memory, 0)?; }
+        let buffer_memory = unsafe { device.ptr().allocate_memory(&memory_info, None) }?;
+        unsafe { device.ptr().bind_buffer_memory(buffer, buffer_memory, 0)?; }
 
         Ok(Self {
             buffer: Some(buffer),
@@ -49,7 +52,7 @@ impl Buffer {
         let memory = unsafe { instance.get_physical_device_memory_properties(*instance.device().physical_device().ptr()) };
         (0..memory.memory_type_count)
             .find(|i| {
-                let suitable = (requirements.memory_type_bits & (1 << i)) != 0;
+                let suitable = (requirements.memory_type_bits & (1u32 << i)) != 0;
                 let memory_type = memory.memory_types[*i as usize];
                 suitable && memory_type.property_flags.contains(properties)
             })

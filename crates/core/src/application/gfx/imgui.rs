@@ -1,13 +1,15 @@
-use crate::device::Device;
-use crate::mesh::DynamicMesh;
-use crate::pipeline::Pipeline;
-use crate::shader_module::ShaderModule;
+use crate::application::gfx::device::Device;
+use crate::application::gfx::instance::Instance;
+use crate::application::gfx::resources::pipeline::AlphaMode;
+use crate::application::gfx::resources::mesh::DynamicMesh;
+use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
+use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageInfos};
 use anyhow::Error;
-use imgui::sys::{igEndFrame, igGetDrawData, igGetIO, igNewFrame, igRender, igShowDemoWindow, ImDrawIdx, ImDrawVert, ImVec2, ImVec4};
+use imgui::sys::{igGetIO, ImDrawVert};
+use vulkanalia::vk;
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
-use std::ptr::null_mut;
-use std::slice;
 use vulkanalia::vk::CommandBuffer;
+use crate::application::gfx::render_pass::{RenderPass, RenderPassCreateInfos};
 
 const PIXEL: &str = r#"
 struct VsToFs {
@@ -51,31 +53,62 @@ float4 main(VsToFs input) : SV_TARGET {
 pub struct ImGui {
     compiler: HlslCompiler,
     mesh: DynamicMesh,
+    render_pass: RenderPass
 }
 
 impl ImGui {
-    pub fn new(device: &Device) -> Result<Self, Error> {
+    pub fn new(instance: &Instance) -> Result<Self, Error> {
         let mut compiler = HlslCompiler::new()?;
 
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
         let fragment = compiler.compile(&RawShaderDefinition::new("imgui-fragment", "ps_6_0", FRAGMENT.to_string()))?;
 
-        let vertex = ShaderModule::new(device.ptr(), &vertex.raw())?;
-        let fragment = ShaderModule::new(device.ptr(), &fragment.raw())?;
+        let vertex = ShaderStage::new(instance.device().ptr(), &vertex.raw(), ShaderStageInfos {
+            descriptor_bindings: vec![],
+            push_constant_size: None,
+            stage_input: vec![],
+            stage: vk::ShaderStageFlags::VERTEX,
+            entry_point: "main".to_string(),
+        })?;
+        let fragment = ShaderStage::new(instance.device().ptr(), &fragment.raw(),
+                                        ShaderStageInfos {
+                                            descriptor_bindings: vec![],
+                                            push_constant_size: None,
+                                            stage_input: vec![],
+                                            stage: vk::ShaderStageFlags::FRAGMENT,
+                                            entry_point: "main".to_string(),
+                                        })?;
 
-        let mut pipeline = Pipeline::new(device.ptr(), vertex, fragment)?;
-        pipeline.destroy(device.ptr());
+        let render_pass = RenderPass::new(RenderPassCreateInfos {
+            color_attachments: vec![],
+            depth_attachment: None,
+            is_present_pass: false,
+        }, instance.device().ptr())?;
+        
+        let mut pipeline = Pipeline::new(instance.device().ptr(), &render_pass, vec![vertex, fragment], &PipelineConfig {
+            shader_version: "".to_string(),
+            culling: vk::CullModeFlags::NONE,
+            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+            polygon_mode: vk::PolygonMode::FILL,
+            alpha_mode: AlphaMode::Opaque,
+            depth_test: false,
+            line_width: 1.0,
+        })?;
+        pipeline.destroy(instance.device().ptr());
 
-        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), device.ptr())?;
+        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), instance)?;
 
         Ok(Self {
             compiler,
             mesh,
+            render_pass
         })
     }
 
     pub fn render(&mut self, command_buffer: &CommandBuffer, device: &Device) {
         let io = unsafe { &mut *igGetIO() };
+        /*
         io.DisplaySize = ImVec2 { x: command_buffer.get_surface().get_extent().x as f32, y: command_buffer.get_surface().get_extent().y as f32 };
         io.DisplayFramebufferScale = ImVec2 { x: 1.0, y: 1.0 };
         io.DeltaTime = 1.0 / 60.0; //@TODO application::get().delta_time();
@@ -229,5 +262,7 @@ impl ImGui {
             global_idx_offset += cmd.IdxBuffer.Size as u32;
             global_vtx_offset += cmd.VtxBuffer.Size as u32;
         }
+
+         */
     }
 }

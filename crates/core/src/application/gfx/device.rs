@@ -4,9 +4,9 @@ use anyhow::{anyhow, Error};
 use tracing::{info, warn};
 use vulkanalia::{vk, Instance};
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0, KhrSurfaceExtension, Queue, SurfaceKHR};
-use crate::command_buffer::CommandPool;
-use crate::instance::GfxConfig;
-use crate::surface::Surface;
+use crate::application::gfx::command_buffer::CommandPool;
+use crate::application::gfx::instance::GfxConfig;
+use crate::application::gfx::surface::Surface;
 
 pub struct PhysicalDevice {
     physical_device: vk::PhysicalDevice,
@@ -203,7 +203,7 @@ impl Device {
         let features = vk::PhysicalDeviceFeatures::builder();
 
         let layers = if config.validation_layers {
-            vec![crate::instance::VALIDATION_LAYER.as_ptr()]
+            vec![crate::application::gfx::instance::VALIDATION_LAYER.as_ptr()]
         } else {
             Vec::new()
         };

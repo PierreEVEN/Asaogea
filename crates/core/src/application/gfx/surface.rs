@@ -7,9 +7,9 @@ use vulkanalia::{vk};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 use types::rwarc::RwArc;
-use crate::device::{Device, SwapchainSupport};
-use crate::imgui::ImGui;
-use crate::instance::Instance;
+use crate::application::gfx::device::{Device, SwapchainSupport};
+use crate::application::gfx::instance::Instance;
+use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
@@ -27,7 +27,7 @@ pub struct Surface {
 
     framebuffers: Vec<vk::Framebuffer>,
     temp_command_buffer: Vec<CommandBuffer>,
-    present_pass: Option<vk::RenderPass>,
+    present_pass: Option<RenderPass>,
 
     frame: AtomicUsize,
 }
@@ -119,29 +119,15 @@ impl Surface {
             unsafe { self.in_flight_fences.push(device.ptr().create_fence(&fence_info, None)?); }
         }
 
-        let color_attachment = vk::AttachmentDescription::builder()
-            .format(surface_format.format)
-            .samples(vk::SampleCountFlags::_1)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-        let color_attachment_ref = vk::AttachmentReference::builder()
-            .attachment(0)
-            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-        let color_attachments = &[color_attachment_ref];
-        let subpass = vk::SubpassDescription::builder()
-            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-            .color_attachments(color_attachments);
-        let attachments = &[color_attachment];
-        let subpasses = &[subpass];
-        let info = vk::RenderPassCreateInfo::builder()
-            .attachments(attachments)
-            .subpasses(subpasses);
+        self.present_pass = Some(RenderPass::new(RenderPassCreateInfos {
+            color_attachments: vec![RenderPassAttachment {
+                clear_value: None,
+                image_format: surface_format.format,
+            }],
+            depth_attachment: None,
+            is_present_pass: true,
+        }, instance.device().ptr())?);
 
-        unsafe { self.present_pass = Some(device.ptr().create_render_pass(&info, None)?); }
         self.update_swapchain_images(device, &swapchain_support)?;
 
         self.temp_command_buffer = device.command_pool().allocate(device, self.swapchain_images.len() as u32)?;
@@ -211,7 +197,7 @@ impl Surface {
 
             if let Some(swapchain) = self.swapchain.take() {
                 device.ptr().destroy_swapchain_khr(swapchain, None);
-                device.ptr().destroy_render_pass(self.present_pass.take().expect("This render pass is already destroyed"), None);
+                device.ptr().destroy_render_pass(*self.present_pass.as_ref().take().expect("This render pass is already destroyed").ptr().unwrap(), None);
             }
         }
     }
@@ -247,12 +233,13 @@ impl Surface {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let render_pass = self.present_pass.as_ref().expect("Present pass have not been initialized yet").ptr()?;
         self.framebuffers = self.swapchain_image_views
             .iter()
             .map(|i| {
                 let attachments = &[*i];
                 let create_info = vk::FramebufferCreateInfo::builder()
-                    .render_pass(self.present_pass.expect("Present pass have not been initialized yet"))
+                    .render_pass(*render_pass)
                     .attachments(attachments)
                     .width(self.swapchain_extent.width)
                     .height(self.swapchain_extent.height)
@@ -306,7 +293,7 @@ impl Surface {
         unsafe { device.ptr().begin_command_buffer(self.temp_command_buffer[image_index], &info)?; }
 
         let info = vk::RenderPassBeginInfo::builder()
-            .render_pass(self.present_pass.expect("Present pass have not been initialized yet"))
+            .render_pass(*self.present_pass.as_ref().expect("Present pass have not been initialized yet").ptr()?)
             .framebuffer(self.framebuffers[image_index])
             .render_area(render_area)
             .clear_values(clear_values);
@@ -319,7 +306,7 @@ impl Surface {
 
 
 
-        let imgui = ImGui::new(device)?;
+        //let imgui = ImGui::new(device)?;
 
 
 
@@ -333,8 +320,7 @@ impl Surface {
 
 
 
-
-
+        
 
         unsafe { device.ptr().cmd_end_render_pass(self.temp_command_buffer[image_index]); }
         unsafe { device.ptr().end_command_buffer(self.temp_command_buffer[image_index])?; }

@@ -1,7 +1,7 @@
+use anyhow::{anyhow, Error};
+use hassle_rs::{Dxc, DxcIncludeHandler};
 use std::fs;
 use std::path::PathBuf;
-use anyhow::{anyhow, Error};
-use hassle_rs::{Dxc, DxcCompiler, DxcIncludeHandler, DxcLibrary};
 
 pub struct IncludeHandler {}
 
