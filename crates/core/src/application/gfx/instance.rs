@@ -1,16 +1,12 @@
 use std::collections::HashSet;
 use std::ffi::c_void;
-use std::ops::Deref;
-use anyhow::Error;
+use anyhow::{anyhow, Error};
 use tracing::{debug, error, trace, warn};
 use vulkanalia::{vk, Entry};
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::vk::{EntryV1_0, HasBuilder};
 use vulkanalia::window as vk_window;
-use types::rwarc::RwArc;
-use crate::application::gfx::device::{Device};
-use crate::application::gfx::surface::Surface;
-use crate::application::window::CtxAppWindow;
+use crate::application::window::{CtxAppWindow};
 
 pub(crate) const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
 
@@ -20,10 +16,8 @@ pub struct GfxConfig {
 }
 
 pub struct Instance {
-    instance: vulkanalia::Instance,
-    surface: RwArc<Surface>,
-    entry: Entry,
-    device: Device,
+    instance: Option<vulkanalia::Instance>,
+    _entry: Entry,
 }
 
 impl Instance {
@@ -83,44 +77,27 @@ impl Instance {
             info = info.push_next(&mut debug_info);
         }
 
-        let instance = unsafe {
+        let instance = unsafe {entry.create_instance(&info, None)?};
 
-            // Create
-            entry.create_instance(&info, None)?
-        };
-
-        let surface = Surface::new(&instance, ctx.window.ptr()?)?;
-        let device = Device::new(&instance, &surface, &config)?;
-        let instance = Self { instance, entry, device, surface: RwArc::new(surface) };
-        instance.surface.write().create_or_recreate_swapchain(&instance, ctx.window.ptr()?)?;
+        let instance = Self { instance: Some(instance), _entry: entry };
         Ok(instance)
     }
 
-    pub fn surface(&self) -> &RwArc<Surface> {
-        &self.surface
+    pub fn ptr(&self) -> Result<&vulkanalia::Instance, Error> {
+        self.instance.as_ref().ok_or(anyhow!("Instance have been destroyed"))
     }
 
-    pub fn device(&self) -> &Device {
-        &self.device
-    }
-
-    pub fn device_mut(&mut self) -> &mut Device {
-        &mut self.device
+    pub fn destroy(&mut self) -> Result<(), Error> {
+        self.instance = None;
+        Ok(())
     }
 }
 
 impl Drop for Instance {
     fn drop(&mut self) {
-        self.surface.write().destroy(&self, &self.device);
-        self.device.destroy();
-    }
-}
-
-impl Deref for Instance {
-    type Target = vulkanalia::Instance;
-
-    fn deref(&self) -> &Self::Target {
-        &self.instance
+        if self.instance.is_some() {
+            panic!("Instance have not been destroyed using Instance::destroy()");
+        }
     }
 }
 

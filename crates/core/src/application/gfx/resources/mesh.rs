@@ -1,7 +1,7 @@
 use crate::application::gfx::resources::buffer::Buffer;
-use crate::application::gfx::instance::Instance;
 use anyhow::Error;
 use vulkanalia::vk;
+use crate::engine::CtxEngine;
 
 pub struct DynamicMesh {
     vertex_buffer: Buffer,
@@ -10,10 +10,10 @@ pub struct DynamicMesh {
 }
 
 impl DynamicMesh {
-    pub fn new(vertex_structure_size: usize, instance: &Instance) -> Result<Self, Error> {
+    pub fn new(vertex_structure_size: usize, ctx: &CtxEngine) -> Result<Self, Error> {
         Ok(Self {
-            vertex_buffer: Buffer::new(0, vk::BufferUsageFlags::VERTEX_BUFFER, instance)?,
-            index_buffer: Buffer::new(0, vk::BufferUsageFlags::INDEX_BUFFER, instance)?,
+            vertex_buffer: Buffer::new(ctx, 0, vk::BufferUsageFlags::VERTEX_BUFFER)?,
+            index_buffer: Buffer::new(ctx, 0, vk::BufferUsageFlags::INDEX_BUFFER)?,
             vertex_structure_size,
         })
     }

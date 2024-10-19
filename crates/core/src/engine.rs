@@ -8,6 +8,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
 use types::rwslock::RwSLock;
+use crate::application::gfx::device::Device;
 use crate::application::gfx::instance::{GfxConfig, Instance};
 use crate::options::WindowOptions;
 use crate::application::window::{AppWindow, CtxAppWindow};
@@ -15,6 +16,7 @@ use crate::application::window::{AppWindow, CtxAppWindow};
 pub struct Engine {
     windows: HashMap<WindowId, RwSLock<AppWindow>>,
     gfx_instance: Option<RwSLock<Instance>>,
+    gfx_device: Option<RwSLock<Device>>,
     default_window_settings: WindowOptions,
 }
 
@@ -27,6 +29,7 @@ impl Engine {
         Ok(Self {
             windows: Default::default(),
             gfx_instance: None,
+            gfx_device: None,
             default_window_settings,
         })
     }
@@ -41,25 +44,44 @@ impl Engine {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
 
-        let window = AppWindow::new(event_loop, options)?;
+        let mut window = AppWindow::new(event_loop, options)?;
         let id = window.id()?;
+
+        let mut config = GfxConfig {
+            validation_layers: true,
+            required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
+        };
+
+        let engine = self.ctx();
+        let ctx_window = CtxAppWindow::new(&engine, &window);
+        if self.gfx_instance.is_none() {
+            self.gfx_instance = Some(RwSLock::new(
+                Instance::new(&ctx_window, &mut config)?));
+        }
+        window.init(&self.ctx())?;
+
+        let engine = self.ctx();
+        let ctx_window = CtxAppWindow::new(&engine, &window);
+        if self.gfx_device.is_none() {
+            self.gfx_device = Some(RwSLock::new(Device::new(&ctx_window, &GfxConfig {
+                validation_layers: true,
+                required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
+            })?));
+        }
+
+        let engine = self.ctx();
+        let ctx_window = CtxAppWindow::new(&engine, &window);
+        window.surface()?.write()?.create_or_recreate_swapchain(&ctx_window)?;
+
         self.windows.insert(id, RwSLock::new(window));
 
-        if self.gfx_instance.is_none() {
-            let window = self.windows.get(&id).expect("Failed to insert new window");
-
-            let ctx_window = &CtxAppWindow {
-                engine: &self.ctx(),
-                window: &*window.read()?,
-            };
-
-            self.gfx_instance = Some(RwSLock::new(
-                Instance::new(ctx_window, &mut GfxConfig {
-                    validation_layers: true,
-                    required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
-                })?));
-        }
         Ok(())
+    }
+
+    pub fn device(&self) -> Result<RwLockReadGuard<Device>, Error> {
+        self.gfx_device.as_ref()
+            .ok_or(anyhow!("Device is not valid. Please create a window first"))?
+            .read()
     }
 
     pub fn instance(&self) -> Result<RwLockReadGuard<Instance>, Error> {
@@ -101,6 +123,27 @@ impl ApplicationHandler for Engine {
                     Ok(_) => {}
                     Err(err) => { error!("Event failed : {}", err) }
                 };
+            }
+        }
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        for window in self.windows.values() {
+            if let Err(err) = window.write().unwrap().destroy(&CtxEngine { engine: self }) {
+                panic!("Failed to destroy window : {}", err);
+            }
+        }
+        self.windows.clear();
+        if let Some(device) = self.gfx_device.take() {
+            if let Err(err) = device.write().unwrap().destroy() {
+                panic!("Failed to destroy device : {}", err);
+            };
+        }
+        if let Some(instance) = self.gfx_instance.take() {
+            if let Err(err) = instance.write().unwrap().destroy() {
+                panic!("Failed to destroy instance : {}", err);
             }
         }
     }

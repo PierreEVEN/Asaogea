@@ -202,8 +202,8 @@ impl Pipeline {
             .base_pipeline_index(-1)
             .build();
 
-        for mut stage in &mut stages {
-            stage.destroy(device);
+        for stage in &mut stages {
+            stage.destroy(device)?;
         }
 
         let (pipeline, success_code) = unsafe { device.create_graphics_pipelines(vk::PipelineCache::default(), &[ci_pipeline], None) }?;
@@ -211,7 +211,7 @@ impl Pipeline {
         if success_code != SuccessCode::SUCCESS || pipeline.len() != 1 {
             return Err(anyhow!("Failed to create pipeline : {:?}", success_code))
         }
-        
+
         Ok(Self {
             pipeline_layout: Some(pipeline_layout),
             pipeline: Some(pipeline[0])

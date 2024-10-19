@@ -3,17 +3,35 @@ use tracing::{error};
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-use crate::engine::CtxEngine;
+use types::rwslock::RwSLock;
+use crate::application::gfx::surface::Surface;
+use crate::engine::{CtxEngine, Engine};
 use crate::options::{WindowOptions};
 
 pub struct AppWindow {
     window: Option<Window>,
+    surface: Option<RwSLock<Surface>>,
     minimized: bool,
 }
 
 pub struct CtxAppWindow<'a> {
-    pub engine: &'a CtxEngine<'a>,
+    engine: &'a CtxEngine<'a>,
     pub window: &'a AppWindow,
+}
+
+impl<'a> CtxAppWindow<'a> {
+    pub fn new(engine: &'a CtxEngine, window: &'a AppWindow) -> Self {
+        Self { engine, window }
+    }
+}
+
+impl<'a> CtxAppWindow<'a> {
+    pub fn engine(&self) -> &Engine {
+        &self.engine.engine
+    }
+    pub fn ctx_engine(&self) -> &CtxEngine {
+        &self.engine
+    }
 }
 
 impl AppWindow {}
@@ -23,10 +41,19 @@ impl AppWindow {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
 
+        let window = event_loop.create_window(attributes)?;
+
         Ok(Self {
-            window: Some(event_loop.create_window(attributes)?),
+            window: Some(window),
+            surface: None,
             minimized: false,
         })
+    }
+
+    pub fn init(&mut self, ctx: &CtxEngine) -> Result<(), Error> {
+        let ctx = CtxAppWindow { engine: ctx, window: self };
+        self.surface = Some(RwSLock::new(Surface::new(&ctx)?));
+        Ok(())
     }
 
     pub fn id(&self) -> Result<WindowId, Error> {
@@ -36,17 +63,20 @@ impl AppWindow {
     pub fn ptr(&self) -> Result<&Window, Error> {
         self.window.as_ref().ok_or(anyhow!("Window have been destroyed"))
     }
-
+    
+    pub fn surface(&self) -> Result<&RwSLock<Surface>, Error> {
+        self.surface.as_ref().ok_or(anyhow!("Surface is not valid. Window::init() have not been called or the windows have been destroyed"))
+    }
+    
     pub fn window_event(&mut self, ctx: &CtxEngine, event_loop: &ActiveEventLoop, event: WindowEvent) -> Result<(), Error> {
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
+                let ctx = CtxAppWindow { engine: ctx, window: self };
                 if !self.minimized {
-                    let instance = ctx.engine.instance_mut()?;
-                    let window = self.window.as_ref().expect("Invalid window");
-                    let should_recreate = match instance.surface().write().render(instance.device()) {
+                    let should_recreate = match self.surface()?.write()?.render(&ctx) {
                         Ok(should_recreate) => { should_recreate }
                         Err(err) => {
                             error!("Failed to render frame : {}", err);
@@ -54,7 +84,7 @@ impl AppWindow {
                         }
                     };
                     if should_recreate {
-                        match instance.surface().write().create_or_recreate_swapchain(&instance, window) {
+                        match self.surface()?.write()?.create_or_recreate_swapchain(&ctx) {
                             Ok(_) => {}
                             Err(err) => {
                                 error!("Failed to recreate swapchain : {}", err);
@@ -69,6 +99,15 @@ impl AppWindow {
             }
             _ => (),
         }
+        Ok(())
+    }
+    
+    pub fn destroy(&mut self, ctx: &CtxEngine) -> Result<(), Error> {
+        if let Some(surface) = &self.surface {
+            let ctx = CtxAppWindow { engine: ctx, window: self };
+            surface.write()?.destroy(&ctx)?;
+        }
+        self.surface = None;
         Ok(())
     }
 }

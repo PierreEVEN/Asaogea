@@ -5,11 +5,10 @@ use tracing::info;
 use vulkanalia::vk::{CommandBuffer, CommandBufferResetFlags, DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSurfaceExtension, KhrSwapchainExtension, KhrWin32SurfaceExtension, SurfaceKHR, HINSTANCE};
 use vulkanalia::{vk};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use winit::window::Window;
 use types::rwarc::RwArc;
 use crate::application::gfx::device::{Device, SwapchainSupport};
-use crate::application::gfx::instance::Instance;
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
+use crate::application::window::CtxAppWindow;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
@@ -33,8 +32,8 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn new(instance: &vulkanalia::Instance, window: &Window) -> Result<Self, Error> {
-        let surface = match window.window_handle()?.as_raw() {
+    pub fn new(ctx: &CtxAppWindow) -> Result<Self, Error> {
+        let surface = match ctx.window.ptr()?.window_handle()?.as_raw() {
             RawWindowHandle::Win32(handle) => {
                 let hinstance = match handle.hinstance {
                     None => { return Err(anyhow!("Invalid hinstance")) }
@@ -43,7 +42,7 @@ impl Surface {
                 let info = vk::Win32SurfaceCreateInfoKHR::builder()
                     .hinstance(hinstance.get() as HINSTANCE)
                     .hwnd(handle.hwnd.get() as HINSTANCE);
-                unsafe { instance.create_win32_surface_khr(&info, None) }?
+                unsafe { ctx.engine().instance()?.ptr()?.create_win32_surface_khr(&info, None) }?
             }
             value => {
                 return Err(anyhow!("Unsupported window platform : {:?}", value));
@@ -67,19 +66,23 @@ impl Surface {
         })
     }
 
-    pub fn create_or_recreate_swapchain(&mut self, instance: &Instance, window: &Window) -> Result<(), Error> {
-        let device = instance.device();
+    pub fn ptr(&self) -> Result<&SurfaceKHR, Error> {
+        self.surface.as_ref().ok_or(anyhow!("Surface have already been destroyed"))
+    }
+    
+    pub fn create_or_recreate_swapchain(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
+        let device = ctx.engine().device()?;
 
         if self.swapchain.is_some() {
-            self.destroy_swapchain(device);
+            self.destroy_swapchain(ctx)?;
         }
         let surface = self.surface.expect("Surface have not been created yet !");
 
-        let swapchain_support = SwapchainSupport::get(instance, surface, *instance.device().physical_device().ptr())?;
+        let swapchain_support = SwapchainSupport::get(ctx, self, *ctx.engine().device()?.physical_device().ptr())?;
 
         let surface_format = Self::get_swapchain_surface_format(&swapchain_support);
         let present_mode = Self::get_swapchain_present_mode(&swapchain_support);
-        let extent = Self::get_swapchain_extent(window, &swapchain_support);
+        let extent = Self::get_swapchain_extent(ctx, &swapchain_support)?;
         let image_count = std::cmp::min(swapchain_support.capabilities.min_image_count + 1,
                                         swapchain_support.capabilities.max_image_count);
 
@@ -126,11 +129,11 @@ impl Surface {
             }],
             depth_attachment: None,
             is_present_pass: true,
-        }, instance.device().ptr())?);
+        }, device.ptr())?);
 
-        self.update_swapchain_images(device, &swapchain_support)?;
+        self.update_swapchain_images(&*device, &swapchain_support)?;
 
-        self.temp_command_buffer = device.command_pool().allocate(device, self.swapchain_images.len() as u32)?;
+        self.temp_command_buffer = device.command_pool().allocate(&*device, self.swapchain_images.len() as u32)?;
 
         *self.images_in_flight.write() = self.swapchain_images
             .iter()
@@ -142,21 +145,21 @@ impl Surface {
         Ok(())
     }
 
-    pub fn get_swapchain_extent(window: &Window, swapchain_support: &SwapchainSupport) -> vk::Extent2D {
-        if swapchain_support.capabilities.current_extent.width != u32::MAX {
+    pub fn get_swapchain_extent(ctx: &CtxAppWindow, swapchain_support: &SwapchainSupport) -> Result<vk::Extent2D, Error> {
+        Ok(if swapchain_support.capabilities.current_extent.width != u32::MAX {
             swapchain_support.capabilities.current_extent
         } else {
             vk::Extent2D::builder()
-                .width(window.inner_size().width.clamp(
+                .width(ctx.window.ptr()?.inner_size().width.clamp(
                     swapchain_support.capabilities.min_image_extent.width,
                     swapchain_support.capabilities.max_image_extent.width,
                 ))
-                .height(window.inner_size().height.clamp(
+                .height(ctx.window.ptr()?.inner_size().height.clamp(
                     swapchain_support.capabilities.min_image_extent.height,
                     swapchain_support.capabilities.max_image_extent.height,
                 ))
                 .build()
-        }
+        })
     }
 
     pub fn get_swapchain_surface_format(swapchain_support: &SwapchainSupport) -> vk::SurfaceFormatKHR {
@@ -179,7 +182,9 @@ impl Surface {
     }
 
 
-    fn destroy_swapchain(&mut self, device: &Device) {
+    fn destroy_swapchain(&mut self, ctx: &CtxAppWindow) -> Result<(), Error>{
+        let device = ctx.engine().device()?;
+        
         unsafe { device.ptr().device_wait_idle().unwrap(); }
 
         unsafe {
@@ -187,7 +192,7 @@ impl Surface {
                 .iter()
                 .for_each(|f| device.ptr().destroy_framebuffer(*f, None));
 
-            device.command_pool().free(device, &self.temp_command_buffer);
+            device.command_pool().free(&*device, &self.temp_command_buffer);
 
             self.swapchain_image_views
                 .iter()
@@ -200,6 +205,7 @@ impl Surface {
                 device.ptr().destroy_render_pass(*self.present_pass.as_ref().take().expect("This render pass is already destroyed").ptr().unwrap(), None);
             }
         }
+        Ok(())
     }
 
     fn update_swapchain_images(&mut self, device: &Device, swapchain_support: &SwapchainSupport) -> Result<(), Error> {
@@ -252,10 +258,11 @@ impl Surface {
         Ok(())
     }
 
-    pub fn render(&mut self, device: &Device) -> Result<bool, Error> {
+    pub fn render(&mut self, ctx: &CtxAppWindow) -> Result<bool, Error> {
         let frame = self.frame.load(Ordering::SeqCst);
         let swapchain = self.swapchain.ok_or(anyhow!("Swapchain is not valid"))?;
-
+        let device = ctx.engine().device()?;
+        
         unsafe { device.ptr().wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?; }
         unsafe { device.ptr().reset_fences(&[self.in_flight_fences[frame]])?; }
 
@@ -320,7 +327,7 @@ impl Surface {
 
 
 
-        
+
 
         unsafe { device.ptr().cmd_end_render_pass(self.temp_command_buffer[image_index]); }
         unsafe { device.ptr().end_command_buffer(self.temp_command_buffer[image_index])?; }
@@ -359,10 +366,12 @@ impl Surface {
         Ok(false)
     }
 
-    pub fn destroy(&mut self, instance: &Instance, device: &Device) {
+    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
         unsafe {
-            self.destroy_swapchain(device);
+            self.destroy_swapchain(ctx)?;
 
+            let device = ctx.engine().device()?;
+            
             self.render_finished_semaphores
                 .iter()
                 .for_each(|s| device.ptr().destroy_semaphore(*s, None));
@@ -373,7 +382,8 @@ impl Surface {
                 .iter()
                 .for_each(|f| device.ptr().destroy_fence(*f, None));
 
-            instance.destroy_surface_khr(self.surface.take().expect("This surface is already destroyed"), None);
+            ctx.engine().instance()?.ptr()?.destroy_surface_khr(self.surface.take().ok_or(anyhow!("This surface is already destroyed"))?, None);
+            Ok(())
         }
     }
 }

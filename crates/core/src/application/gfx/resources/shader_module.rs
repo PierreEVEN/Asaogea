@@ -45,11 +45,15 @@ impl ShaderStage {
     }
 
     pub fn shader_module(&self) -> &vk::ShaderModule {
-        &self.shader_module.as_ref().expect("Shader module have been destroyed")
+        self.shader_module.as_ref().expect("Shader module have been destroyed")
     }
 
-    pub fn destroy(&mut self, device: &vulkanalia::Device) {
-        unsafe { device.destroy_shader_module(self.shader_module.take().expect("Shader module have already been destroyed"), None); }
+    pub fn destroy(&mut self, device: &vulkanalia::Device) -> Result<(), Error>{
+        if let Some(shader_module) = &self.shader_module {
+            unsafe { device.destroy_shader_module(*shader_module, None); }
+        }
+        self.shader_module = None;
+        Ok(())
     }
 
     pub fn infos(&self) -> &ShaderStageInfos {

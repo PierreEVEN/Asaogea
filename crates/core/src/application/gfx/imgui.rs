@@ -1,15 +1,15 @@
 use crate::application::gfx::device::Device;
-use crate::application::gfx::instance::Instance;
-use crate::application::gfx::resources::pipeline::AlphaMode;
+use crate::application::gfx::render_pass::{RenderPass, RenderPassCreateInfos};
 use crate::application::gfx::resources::mesh::DynamicMesh;
+use crate::application::gfx::resources::pipeline::AlphaMode;
 use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
 use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageInfos};
+use crate::application::window::CtxAppWindow;
 use anyhow::Error;
 use imgui::sys::{igGetIO, ImDrawVert};
-use vulkanalia::vk;
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
+use vulkanalia::vk;
 use vulkanalia::vk::CommandBuffer;
-use crate::application::gfx::render_pass::{RenderPass, RenderPassCreateInfos};
 
 const PIXEL: &str = r#"
 struct VsToFs {
@@ -57,20 +57,22 @@ pub struct ImGui {
 }
 
 impl ImGui {
-    pub fn new(instance: &Instance) -> Result<Self, Error> {
+    pub fn new(ctx: &CtxAppWindow) -> Result<Self, Error> {
         let mut compiler = HlslCompiler::new()?;
 
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
         let fragment = compiler.compile(&RawShaderDefinition::new("imgui-fragment", "ps_6_0", FRAGMENT.to_string()))?;
 
-        let vertex = ShaderStage::new(instance.device().ptr(), &vertex.raw(), ShaderStageInfos {
+        let device = ctx.engine().device()?;
+        
+        let vertex = ShaderStage::new(device.ptr(), &vertex.raw(), ShaderStageInfos {
             descriptor_bindings: vec![],
             push_constant_size: None,
             stage_input: vec![],
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: "main".to_string(),
         })?;
-        let fragment = ShaderStage::new(instance.device().ptr(), &fragment.raw(),
+        let fragment = ShaderStage::new(device.ptr(), &fragment.raw(),
                                         ShaderStageInfos {
                                             descriptor_bindings: vec![],
                                             push_constant_size: None,
@@ -83,9 +85,9 @@ impl ImGui {
             color_attachments: vec![],
             depth_attachment: None,
             is_present_pass: false,
-        }, instance.device().ptr())?;
+        }, device.ptr())?;
         
-        let mut pipeline = Pipeline::new(instance.device().ptr(), &render_pass, vec![vertex, fragment], &PipelineConfig {
+        let mut pipeline = Pipeline::new(device.ptr(), &render_pass, vec![vertex, fragment], &PipelineConfig {
             shader_version: "".to_string(),
             culling: vk::CullModeFlags::NONE,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
@@ -95,9 +97,9 @@ impl ImGui {
             depth_test: false,
             line_width: 1.0,
         })?;
-        pipeline.destroy(instance.device().ptr());
+        pipeline.destroy(device.ptr());
 
-        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), instance)?;
+        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.ctx_engine())?;
 
         Ok(Self {
             compiler,

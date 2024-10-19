@@ -2,7 +2,7 @@ use anyhow::{anyhow, Error};
 use std::ops::Deref;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0};
 use vulkanalia::{vk, Device};
-use crate::application::gfx::instance::Instance;
+use crate::engine::CtxEngine;
 
 pub struct Buffer {
     buffer: Option<vk::Buffer>,
@@ -12,9 +12,8 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub fn new(mut size: usize, usage: vk::BufferUsageFlags, instance: &Instance) -> Result<Self, Error> {
-
-        let device = instance.device();
+    pub fn new(ctx: &CtxEngine, mut size: usize, usage: vk::BufferUsageFlags) -> Result<Self, Error> {
+        let device = ctx.engine.device()?;
 
         if size == 0 {
             size = 1;
@@ -28,11 +27,7 @@ impl Buffer {
         let requirements = unsafe { device.ptr().get_buffer_memory_requirements(buffer) };
         let memory_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(requirements.size)
-            .memory_type_index(Self::get_memory_type_index(
-                instance,
-                vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
-                requirements,
-            )?);
+            .memory_type_index(Self::get_memory_type_index(ctx, vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE, requirements)?);
         let buffer_memory = unsafe { device.ptr().allocate_memory(&memory_info, None) }?;
         unsafe { device.ptr().bind_buffer_memory(buffer, buffer_memory, 0)?; }
 
@@ -44,12 +39,8 @@ impl Buffer {
         })
     }
 
-    fn get_memory_type_index(
-        instance: &Instance,
-        properties: vk::MemoryPropertyFlags,
-        requirements: vk::MemoryRequirements,
-    ) -> Result<u32, Error> {
-        let memory = unsafe { instance.get_physical_device_memory_properties(*instance.device().physical_device().ptr()) };
+    fn get_memory_type_index(ctx: &CtxEngine, properties: vk::MemoryPropertyFlags, requirements: vk::MemoryRequirements) -> Result<u32, Error> {
+        let memory = unsafe { ctx.engine.instance()?.ptr()?.get_physical_device_memory_properties(*ctx.engine.device()?.physical_device().ptr()) };
         (0..memory.memory_type_count)
             .find(|i| {
                 let suitable = (requirements.memory_type_bits & (1u32 << i)) != 0;
@@ -58,7 +49,7 @@ impl Buffer {
             })
             .ok_or_else(|| anyhow!("Failed to find suitable memory type."))?;
 
-        Ok((0))
+        todo!()
     }
 
     pub fn resize(&mut self, device: &Device, size: usize) -> Result<(), Error> {
