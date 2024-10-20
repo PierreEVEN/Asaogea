@@ -4,10 +4,9 @@ use anyhow::{anyhow, Error};
 use tracing::{error, warn};
 use vulkanalia::vk;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
-use macros::ResourceObject;
 use types::rwslock::RwSLock;
 use crate::application::gfx::device::Device;
 use crate::application::gfx::instance::{GfxConfig, Instance};
@@ -18,7 +17,7 @@ pub struct Engine {
     windows: HashMap<WindowId, RwSLock<AppWindow>>,
     gfx_instance: Option<RwSLock<Instance>>,
     gfx_device: Option<RwSLock<Device>>,
-    default_window_settings: WindowOptions,
+    default_window_settings: WindowOptions
 }
 
 pub struct CtxEngine<'a> {
@@ -31,7 +30,7 @@ impl Engine {
             windows: Default::default(),
             gfx_instance: None,
             gfx_device: None,
-            default_window_settings,
+            default_window_settings
         })
     }
 

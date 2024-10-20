@@ -49,15 +49,15 @@ impl DynamicMesh {
         let vtx = self.vertex_buffer.as_mut().unwrap();
         let idx = self.index_buffer.as_mut().unwrap();
 
-        if index_start * index_size + vertex_start * self.vertex_structure_size + vertex_data.len() > vtx.size() {
+        if vertex_start * self.vertex_structure_size + vertex_data.len() > vtx.size() {
             vtx.resize(ctx, vertex_data.len())?;
         }
-        vtx.set_data(ctx, vertex_start, vertex_data)?;
+        vtx.set_data(ctx, vertex_start * self.vertex_structure_size, vertex_data)?;
 
-        if index_data.len() > idx.size() {
+        if index_start * index_size + index_data.len() > idx.size() {
             idx.resize(ctx, index_data.len())?;
         }
-        idx.set_data(ctx, index_start, index_data)?;
+        idx.set_data(ctx, index_start * index_size, index_data)?;
 
         Ok(())
     }

@@ -4,6 +4,6 @@ use core::options::{WindowOptions};
 
 fn main() -> Result<(), Error> {
     tracing_subscriber::fmt().init();
-    let mut engine = Engine::new(WindowOptions { name: "Engine".to_string() })?;
+    let mut engine = Engine::new(WindowOptions { name: "Asaogea".to_string() })?;
     engine.run()
 }

@@ -137,7 +137,7 @@ impl ImGui {
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
             polygon_mode: vk::PolygonMode::FILL,
-            alpha_mode: AlphaMode::Opaque,
+            alpha_mode: AlphaMode::Translucent,
             depth_test: true,
             line_width: 1.0,
         })?;
@@ -232,20 +232,17 @@ impl ImGui {
 
         io.DisplaySize = ImVec2 { x: ctx.window.width()? as f32, y: ctx.window.height()? as f32 };
         io.DisplayFramebufferScale = ImVec2 { x: 1.0, y: 1.0 };
-        io.DeltaTime = 1.0 / 60.0; //@TODO application::get().delta_time();
+        io.DeltaTime = f32::max(ctx.window.delta_time as f32, 0.0000000001f32);
 
-        /*
         // Update mouse
-        let input_manager = engine.platform.input_manager();
-        io.MouseDown[0] = input_manager.is_input_pressed(InputMapping::MouseButton(MouseButton::Left));
-        io.MouseDown[1] = input_manager.is_input_pressed(InputMapping::MouseButton(MouseButton::Right));
-        io.MouseDown[2] = input_manager.is_input_pressed(InputMapping::MouseButton(MouseButton::Middle));
-        io.MouseDown[3] = input_manager.is_input_pressed(InputMapping::MouseButton(MouseButton::Button1));
-        io.MouseDown[4] = input_manager.is_input_pressed(InputMapping::MouseButton(MouseButton::Button2));
+        io.MouseDown[0] = ctx.window.left_pressed;
+        io.MouseDown[1] = ctx.window.right_pressed;
+        io.MouseDown[2] = false;
+        io.MouseDown[3] = false;
+        io.MouseDown[4] = false;
         io.MouseHoveredViewport = 0;
-        io.MousePos = ImVec2 { x: input_manager.get_mouse_position().x, y: input_manager.get_mouse_position().y };
+        io.MousePos = ImVec2 { x: ctx.window.mouse_x as f32, y: ctx.window.mouse_y as f32 };
 
-         */
         unsafe { igNewFrame(); }
 
 
@@ -277,12 +274,12 @@ impl ImGui {
                                                      vertex_start,
                                                      slice::from_raw_parts(
                                                          cmd_list.VtxBuffer.Data as *const u8,
-                                                         cmd_list.VtxBuffer.Size as usize * size_of::<ImDrawVert>() as usize,
+                                                         cmd_list.VtxBuffer.Size as usize * size_of::<ImDrawVert>(),
                                                      ),
                                                      index_start,
                                                      slice::from_raw_parts(
                                                          cmd_list.IdxBuffer.Data as *const u8,
-                                                         cmd_list.IdxBuffer.Size as usize * size_of::<ImDrawIdx>() as usize,
+                                                         cmd_list.IdxBuffer.Size as usize * size_of::<ImDrawIdx>(),
                                                      ),
                 )?;
 

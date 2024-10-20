@@ -1,6 +1,7 @@
+use std::time::Instant;
 use anyhow::{anyhow, Error};
 use tracing::{error};
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 use types::rwslock::RwSLock;
@@ -12,6 +13,12 @@ pub struct AppWindow {
     window: Option<Window>,
     surface: Option<RwSLock<Surface>>,
     minimized: bool,
+    pub mouse_x: f64,
+    pub mouse_y: f64,
+    pub left_pressed: bool,
+    pub right_pressed: bool,
+    last_frame_time: Instant,
+    pub delta_time: f64,
 }
 
 pub struct CtxAppWindow<'a> {
@@ -47,6 +54,12 @@ impl AppWindow {
             window: Some(window),
             surface: None,
             minimized: false,
+            mouse_x: 0.0,
+            mouse_y: 0.0,
+            left_pressed: false,
+            right_pressed: false,
+            last_frame_time: Instant::now(),
+            delta_time: 0.0,
         })
     }
 
@@ -63,7 +76,7 @@ impl AppWindow {
     pub fn ptr(&self) -> Result<&Window, Error> {
         self.window.as_ref().ok_or(anyhow!("Window have been destroyed"))
     }
-    
+
     pub fn surface(&self) -> Result<&RwSLock<Surface>, Error> {
         self.surface.as_ref().ok_or(anyhow!("Surface is not valid. Window::init() have not been called or the windows have been destroyed"))
     }
@@ -78,10 +91,41 @@ impl AppWindow {
 
     pub fn window_event(&mut self, ctx: &CtxEngine, event_loop: &ActiveEventLoop, event: WindowEvent) -> Result<(), Error> {
         match event {
+            WindowEvent::CursorMoved { device_id, position } => {
+                self.mouse_x = position.x;
+                self.mouse_y = position.y;
+            }
+            WindowEvent::MouseInput { device_id, state: ElementState, button: MouseButton } => {
+                match ElementState {
+                    ElementState::Pressed => {
+                        match MouseButton {
+                            MouseButton::Left => { self.left_pressed = true }
+                            MouseButton::Right => { self.right_pressed = true }
+                            MouseButton::Middle => {}
+                            MouseButton::Back => {}
+                            MouseButton::Forward => {}
+                            MouseButton::Other(_) => {}
+                        }
+                    }
+                    ElementState::Released => {
+                        match MouseButton {
+                            MouseButton::Left => { self.left_pressed = false }
+                            MouseButton::Right => { self.right_pressed = false }
+                            MouseButton::Middle => {}
+                            MouseButton::Back => {}
+                            MouseButton::Forward => {}
+                            MouseButton::Other(_) => {}
+                        }
+                    }
+                }
+            }
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
+                let elapsed = self.last_frame_time.elapsed().as_secs_f64();
+                self.delta_time = elapsed;
+                self.last_frame_time = Instant::now();
                 let ctx = CtxAppWindow { engine: ctx, window: self };
                 if !self.minimized {
                     let should_recreate = match self.surface()?.write()?.render(&ctx) {
@@ -109,7 +153,7 @@ impl AppWindow {
         }
         Ok(())
     }
-    
+
     pub fn destroy(&mut self, ctx: &CtxEngine) -> Result<(), Error> {
         if let Some(surface) = &self.surface {
             let ctx = CtxAppWindow { engine: ctx, window: self };
