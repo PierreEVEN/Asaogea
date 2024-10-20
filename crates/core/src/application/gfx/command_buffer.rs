@@ -2,6 +2,7 @@ use anyhow::Error;
 use vulkanalia::vk;
 use vulkanalia::vk::{CommandBuffer, DeviceV1_0, HasBuilder};
 use crate::application::gfx::device::{Device, QueueFamilyIndices};
+use crate::application::window::CtxAppWindow;
 
 pub struct CommandPool {
     command_pool: Option<vk::CommandPool>,
@@ -28,8 +29,9 @@ impl CommandPool {
         unsafe { Ok(device.ptr().allocate_command_buffers(&allocate_info)?) }
     }
 
-    pub fn free(&self, device: &Device, command_buffers: &Vec<CommandBuffer>) {
-        unsafe { device.ptr().free_command_buffers(self.command_pool.expect("Command pool is null"), command_buffers.as_slice()); }
+    pub fn free(&self, ctx: &CtxAppWindow, command_buffers: &Vec<CommandBuffer>) -> Result<(), Error> {
+        unsafe { ctx.engine().device()?.ptr().free_command_buffers(self.command_pool.expect("Command pool is null"), command_buffers.as_slice()); }
+        Ok(())
     }
 
     pub fn destroy(&mut self, device: &vulkanalia::Device) {

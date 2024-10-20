@@ -189,14 +189,15 @@ impl Surface {
     fn destroy_swapchain(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
         let device = ctx.engine().device()?;
 
-        unsafe { device.ptr().device_wait_idle().unwrap(); }
+        unsafe { device.ptr().device_wait_idle()?; }
 
         unsafe {
             self.framebuffers
                 .iter()
                 .for_each(|f| device.ptr().destroy_framebuffer(*f, None));
 
-            device.command_pool().free(&*device, &self.command_buffer);
+            device.command_pool().free(ctx, &self.command_buffer)?;
+            self.command_buffer.clear();
 
             self.swapchain_image_views
                 .iter()
@@ -206,8 +207,11 @@ impl Surface {
 
             if let Some(swapchain) = self.swapchain.take() {
                 device.ptr().destroy_swapchain_khr(swapchain, None);
-                device.ptr().destroy_render_pass(*self.present_pass.as_ref().take().expect("This render pass is already destroyed").ptr().unwrap(), None);
             }
+            if let Some(present_pass) = &mut self.present_pass {
+                present_pass.destroy(ctx)?;
+            }
+            self.present_pass = None;
         }
         Ok(())
     }
@@ -357,9 +361,21 @@ impl Surface {
     }
 
     pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
-        unsafe {
-            self.destroy_swapchain(ctx)?;
+        if let Some(imgui) = &mut self.imgui_temp {
+            imgui.destroy(ctx)?;
+        }
+        self.imgui_temp = None;
 
+        let device = ctx.engine().device()?;
+
+        unsafe { device.ptr().device_wait_idle()?; }
+
+        if let Some(present_pass) = &mut self.present_pass {
+            present_pass.destroy(ctx)?;
+        }
+        self.destroy_swapchain(ctx)?;
+
+        unsafe {
             let device = ctx.engine().device()?;
 
             self.render_finished_semaphores
@@ -373,8 +389,11 @@ impl Surface {
                 .for_each(|f| device.ptr().destroy_fence(*f, None));
 
             ctx.engine().instance()?.ptr()?.destroy_surface_khr(self.surface.take().ok_or(anyhow!("This surface is already destroyed"))?, None);
-            Ok(())
         }
+
+        self.present_pass = None;
+
+        Ok(())
     }
 }
 
@@ -391,7 +410,7 @@ impl Deref for Surface {
 
 impl Drop for Surface {
     fn drop(&mut self) {
-        if self.surface.is_some() {
+        if self.surface.is_some() || self.present_pass.is_some() {
             panic!("Surface have not been destroyed using Surface::destroy()");
         }
     }

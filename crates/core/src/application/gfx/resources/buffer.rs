@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Error};
 use std::ops::Deref;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0};
-use vulkanalia::{vk, Device};
+use vulkanalia::{vk};
+use crate::application::window::CtxAppWindow;
 use crate::engine::CtxEngine;
 
 pub struct Buffer {
@@ -47,24 +48,22 @@ impl Buffer {
                 let memory_type = memory.memory_types[*i as usize];
                 suitable && memory_type.property_flags.contains(properties)
             })
-            .ok_or_else(|| anyhow!("Failed to find suitable memory type."))?;
-
-        todo!()
+            .ok_or_else(|| anyhow!("Failed to find suitable memory type."))
     }
 
-    pub fn resize(&mut self, device: &Device, size: usize) -> Result<(), Error> {
+    pub fn resize(&mut self, ctx: &CtxAppWindow, size: usize) -> Result<(), Error> {
         if size == 0 || size == self.size {
             return Ok(());
         }
 
-        self.destroy(device);
+        self.destroy(ctx)?;
 
         let buffer_info = vk::BufferCreateInfo::builder()
             .size(size as u64)
             .usage(self.usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        self.buffer = unsafe { Some(device.create_buffer(&buffer_info, None)?) };
+        self.buffer = unsafe { Some(ctx.engine().device()?.ptr().create_buffer(&buffer_info, None)?) };
         self.size = size;
 
         Ok(())
@@ -74,8 +73,10 @@ impl Buffer {
         self.size
     }
 
-    pub fn destroy(&mut self, device: &Device) {
-        unsafe { device.destroy_buffer(self.buffer.take().expect("Buffer have already been destroyed"), None); }
+    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
+        unsafe { ctx.engine().device()?.ptr().free_memory(self.buffer_memory.take().expect("Buffer memory have already been destroyed"), None); }
+        unsafe { ctx.engine().device()?.ptr().destroy_buffer(self.buffer.take().expect("Buffer have already been destroyed"), None); }
+        Ok(())
     }
 }
 
@@ -91,6 +92,9 @@ impl Drop for Buffer {
     fn drop(&mut self) {
         if self.buffer.is_some() {
             panic!("Buffer have not been destroyed using Buffer::destroy()");
+        }
+        if self.buffer_memory.is_some() {
+            panic!("Buffer memory have not been destroyed using Buffer::destroy()");
         }
     }
 }

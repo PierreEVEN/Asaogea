@@ -1,26 +1,25 @@
-use crate::application::gfx::device::Device;
-use crate::application::gfx::render_pass::{RenderPass, RenderPassCreateInfos};
+use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::gfx::resources::mesh::DynamicMesh;
 use crate::application::gfx::resources::pipeline::AlphaMode;
 use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
-use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageInfos};
+use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
 use crate::application::window::CtxAppWindow;
 use anyhow::Error;
-use imgui::sys::{igGetIO, ImDrawVert};
+use imgui::sys::ImDrawVert;
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use vulkanalia::vk;
 use vulkanalia::vk::CommandBuffer;
 
 const PIXEL: &str = r#"
+struct VSInput {
+    [[vk::location(0)]] float2 aPos 	: POSITION;
+    [[vk::location(1)]] float2 aUV 		: TEXCOORD;
+    [[vk::location(2)]] float4 aColor 	: COLOR;
+};
 struct VsToFs {
     float4 Pos 		: SV_Position;
     float4 Color 	: COLOR;
     float2 UV 	 	: TEXCOORD;
-};
-struct VSInput {
-    float2 aPos 	: POSITION;
-    float2 aUV 		: TEXCOORD;
-    float4 aColor 	: COLOR;
 };
 struct PushConsts {
     float2 uScale;
@@ -42,8 +41,8 @@ struct VsToFs {
     float4 Color 	: COLOR;
     float2 UV 	 	: TEXCOORD;
 };
-Texture2D	 sTexture;
-SamplerState sSampler;
+[[vk::binding(0)]]   Texture2D	 sTexture;
+[[vk::binding(1)]]   SamplerState sSampler;
 
 float4 main(VsToFs input) : SV_TARGET {
     return input.Color * sTexture.Sample(sSampler, input.UV);
@@ -52,8 +51,15 @@ float4 main(VsToFs input) : SV_TARGET {
 
 pub struct ImGui {
     compiler: HlslCompiler,
-    mesh: DynamicMesh,
-    render_pass: RenderPass
+    mesh: Option<DynamicMesh>,
+    render_pass: RenderPass,
+}
+
+pub struct ImGuiPushConstants {
+    scale_x: f32,
+    scale_y: f32,
+    translate_x: f32,
+    translate_y: f32,
 }
 
 impl ImGui {
@@ -64,17 +70,43 @@ impl ImGui {
         let fragment = compiler.compile(&RawShaderDefinition::new("imgui-fragment", "ps_6_0", FRAGMENT.to_string()))?;
 
         let device = ctx.engine().device()?;
-        
+
         let vertex = ShaderStage::new(device.ptr(), &vertex.raw(), ShaderStageInfos {
             descriptor_bindings: vec![],
-            push_constant_size: None,
-            stage_input: vec![],
+            push_constant_size: Some(size_of::<ImGuiPushConstants>() as u32),
+            stage_input: vec![
+                ShaderStageInputs {
+                    location: 0,
+                    offset: 0,
+                    input_size: 8,
+                    property_type: vk::Format::R32G32_SFLOAT,
+                },
+                ShaderStageInputs {
+                    location: 1,
+                    offset: 8,
+                    input_size: 8,
+                    property_type: vk::Format::R32G32_SFLOAT,
+                },
+                ShaderStageInputs {
+                    location: 2,
+                    offset: 16,
+                    input_size: 4,
+                    property_type: vk::Format::R8G8B8A8_UNORM,
+                }],
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: "main".to_string(),
         })?;
         let fragment = ShaderStage::new(device.ptr(), &fragment.raw(),
                                         ShaderStageInfos {
-                                            descriptor_bindings: vec![],
+                                            descriptor_bindings: vec![
+                                                ShaderStageBindings {
+                                                    binding: 0,
+                                                    descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                                                },
+                                                ShaderStageBindings {
+                                                    binding: 1,
+                                                    descriptor_type: vk::DescriptorType::SAMPLER,
+                                                }],
                                             push_constant_size: None,
                                             stage_input: vec![],
                                             stage: vk::ShaderStageFlags::FRAGMENT,
@@ -82,19 +114,21 @@ impl ImGui {
                                         })?;
 
         let render_pass = RenderPass::new(RenderPassCreateInfos {
-            color_attachments: vec![],
+            color_attachments: vec![RenderPassAttachment {
+                clear_value: None,
+                image_format: vk::Format::R8G8B8A8_UNORM,
+            }],
             depth_attachment: None,
             is_present_pass: false,
         }, device.ptr())?;
-        
+
         let mut pipeline = Pipeline::new(device.ptr(), &render_pass, vec![vertex, fragment], &PipelineConfig {
-            shader_version: "".to_string(),
             culling: vk::CullModeFlags::NONE,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
             polygon_mode: vk::PolygonMode::FILL,
             alpha_mode: AlphaMode::Opaque,
-            depth_test: false,
+            depth_test: true,
             line_width: 1.0,
         })?;
         pipeline.destroy(device.ptr());
@@ -103,13 +137,13 @@ impl ImGui {
 
         Ok(Self {
             compiler,
-            mesh,
-            render_pass
+            mesh: Some(mesh),
+            render_pass,
         })
     }
 
     pub fn render(&mut self, command_buffer: &CommandBuffer, ctx: &CtxAppWindow) {
-        let io = unsafe { &mut *igGetIO() };
+        //let io = unsafe { &mut *igGetIO() };
         /*
         io.DisplaySize = ImVec2 { x: command_buffer.get_surface().get_extent().x as f32, y: command_buffer.get_surface().get_extent().y as f32 };
         io.DisplayFramebufferScale = ImVec2 { x: 1.0, y: 1.0 };
@@ -266,5 +300,22 @@ impl ImGui {
         }
 
          */
+    }
+    
+    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error>{
+        if let Some(mesh) = &mut self.mesh {
+            mesh.destroy(ctx)?;
+        }
+        self.render_pass.destroy(ctx)?;
+        self.mesh = None;
+        Ok(())
+    }
+}
+
+impl Drop for ImGui {
+    fn drop(&mut self) {
+        if self.mesh.is_some() {
+            panic!("Imgui have not been destroyed using Imgui::destroy()");
+        }
     }
 }

@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Error};
 use vulkanalia::{vk, Device};
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
+use crate::application::window::{CtxAppWindow};
 
 #[derive(Clone)]
 pub struct RenderPassAttachment {
@@ -133,5 +134,21 @@ impl RenderPass {
 
     pub fn config(&self) -> &RenderPassCreateInfos {
         &self.config
+    }
+    
+    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
+        if let Some(render_pass) = &mut self.render_pass {
+            unsafe { ctx.engine().device()?.ptr().destroy_render_pass(*render_pass, None); }
+        }
+        self.render_pass = None;
+        Ok(())
+    }
+}
+
+impl Drop for RenderPass {
+    fn drop(&mut self) {
+        if self.render_pass.is_some() {
+            panic!("Render pass have not been destroyed using RenderPass::destroy()")
+        }
     }
 }

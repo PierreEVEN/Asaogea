@@ -4,12 +4,13 @@ use vulkanalia::bytecode::Bytecode;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct ShaderStageBindings {
     pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
 }
 
+#[derive(Debug)]
 pub struct ShaderStageInputs {
     pub location: u32,
     pub offset: u32,
@@ -17,6 +18,7 @@ pub struct ShaderStageInputs {
     pub property_type: vk::Format,
 }
 
+#[derive(Debug)]
 pub struct ShaderStageInfos {
     pub descriptor_bindings: Vec<ShaderStageBindings>,
     pub push_constant_size: Option<u32>,
