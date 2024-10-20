@@ -108,7 +108,7 @@ impl ImGui {
         })
     }
 
-    pub fn render(&mut self, command_buffer: &CommandBuffer, device: &Device) {
+    pub fn render(&mut self, command_buffer: &CommandBuffer, ctx: &CtxAppWindow) {
         let io = unsafe { &mut *igGetIO() };
         /*
         io.DisplaySize = ImVec2 { x: command_buffer.get_surface().get_extent().x as f32, y: command_buffer.get_surface().get_extent().y as f32 };

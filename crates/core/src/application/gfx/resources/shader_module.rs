@@ -11,7 +11,7 @@ pub struct ShaderStageBindings {
 }
 
 pub struct ShaderStageInputs {
-    pub location: i32,
+    pub location: u32,
     pub offset: u32,
     pub input_size: u32,
     pub property_type: vk::Format,

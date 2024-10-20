@@ -7,6 +7,7 @@ use vulkanalia::{vk};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use types::rwarc::RwArc;
 use crate::application::gfx::device::{Device, SwapchainSupport};
+use crate::application::gfx::imgui::ImGui;
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::window::CtxAppWindow;
 
@@ -25,10 +26,12 @@ pub struct Surface {
     images_in_flight: RwArc<Vec<vk::Fence>>,
 
     framebuffers: Vec<vk::Framebuffer>,
-    temp_command_buffer: Vec<CommandBuffer>,
+    command_buffer: Vec<CommandBuffer>,
     present_pass: Option<RenderPass>,
 
     frame: AtomicUsize,
+
+    imgui_temp: Option<ImGui>,
 }
 
 impl Surface {
@@ -60,16 +63,17 @@ impl Surface {
             in_flight_fences: vec![],
             images_in_flight: RwArc::new(vec![]),
             framebuffers: vec![],
-            temp_command_buffer: vec![],
+            command_buffer: vec![],
             present_pass: None,
             frame: AtomicUsize::new(0),
+            imgui_temp: None,
         })
     }
 
     pub fn ptr(&self) -> Result<&SurfaceKHR, Error> {
         self.surface.as_ref().ok_or(anyhow!("Surface have already been destroyed"))
     }
-    
+
     pub fn create_or_recreate_swapchain(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
         let device = ctx.engine().device()?;
 
@@ -133,7 +137,7 @@ impl Surface {
 
         self.update_swapchain_images(&*device, &swapchain_support)?;
 
-        self.temp_command_buffer = device.command_pool().allocate(&*device, self.swapchain_images.len() as u32)?;
+        self.command_buffer = device.command_pool().allocate(&*device, self.swapchain_images.len() as u32)?;
 
         *self.images_in_flight.write() = self.swapchain_images
             .iter()
@@ -182,9 +186,9 @@ impl Surface {
     }
 
 
-    fn destroy_swapchain(&mut self, ctx: &CtxAppWindow) -> Result<(), Error>{
+    fn destroy_swapchain(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
         let device = ctx.engine().device()?;
-        
+
         unsafe { device.ptr().device_wait_idle().unwrap(); }
 
         unsafe {
@@ -192,7 +196,7 @@ impl Surface {
                 .iter()
                 .for_each(|f| device.ptr().destroy_framebuffer(*f, None));
 
-            device.command_pool().free(&*device, &self.temp_command_buffer);
+            device.command_pool().free(&*device, &self.command_buffer);
 
             self.swapchain_image_views
                 .iter()
@@ -262,7 +266,7 @@ impl Surface {
         let frame = self.frame.load(Ordering::SeqCst);
         let swapchain = self.swapchain.ok_or(anyhow!("Swapchain is not valid"))?;
         let device = ctx.engine().device()?;
-        
+
         unsafe { device.ptr().wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?; }
         unsafe { device.ptr().reset_fences(&[self.in_flight_fences[frame]])?; }
 
@@ -291,13 +295,13 @@ impl Surface {
         };
         let clear_values = &[color_clear_value];
 
-        unsafe { device.ptr().reset_command_buffer(self.temp_command_buffer[image_index], CommandBufferResetFlags::empty())?; }
+        unsafe { device.ptr().reset_command_buffer(self.command_buffer[image_index], CommandBufferResetFlags::empty())?; }
 
         let inheritance = vk::CommandBufferInheritanceInfo::builder();
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::empty()) // Optional.
             .inheritance_info(&inheritance);
-        unsafe { device.ptr().begin_command_buffer(self.temp_command_buffer[image_index], &info)?; }
+        unsafe { device.ptr().begin_command_buffer(self.command_buffer[image_index], &info)?; }
 
         let info = vk::RenderPassBeginInfo::builder()
             .render_pass(*self.present_pass.as_ref().expect("Present pass have not been initialized yet").ptr()?)
@@ -305,36 +309,22 @@ impl Surface {
             .render_area(render_area)
             .clear_values(clear_values);
 
-        unsafe { device.ptr().cmd_begin_render_pass(self.temp_command_buffer[image_index], &info, vk::SubpassContents::INLINE); }
+        unsafe { device.ptr().cmd_begin_render_pass(self.command_buffer[image_index], &info, vk::SubpassContents::INLINE); }
 
 
+        if self.imgui_temp.is_none() {
+            self.imgui_temp = Some(ImGui::new(ctx)?);
+        }
+
+        self.imgui_temp.as_mut().unwrap().render(&self.command_buffer[image_index], ctx);
 
 
-
-
-
-        //let imgui = ImGui::new(device)?;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        unsafe { device.ptr().cmd_end_render_pass(self.temp_command_buffer[image_index]); }
-        unsafe { device.ptr().end_command_buffer(self.temp_command_buffer[image_index])?; }
+        unsafe { device.ptr().cmd_end_render_pass(self.command_buffer[image_index]); }
+        unsafe { device.ptr().end_command_buffer(self.command_buffer[image_index])?; }
 
         let wait_semaphores = &[self.image_available_semaphores[frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = &[self.temp_command_buffer[image_index]];
+        let command_buffers = &[self.command_buffer[image_index]];
         let signal_semaphores = &[self.render_finished_semaphores[frame]];
         let submit_info = vk::SubmitInfo::builder()
             .wait_semaphores(wait_semaphores)
@@ -371,7 +361,7 @@ impl Surface {
             self.destroy_swapchain(ctx)?;
 
             let device = ctx.engine().device()?;
-            
+
             self.render_finished_semaphores
                 .iter()
                 .for_each(|s| device.ptr().destroy_semaphore(*s, None));

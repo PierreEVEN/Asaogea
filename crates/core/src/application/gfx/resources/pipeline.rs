@@ -77,7 +77,7 @@ impl Pipeline {
                         continue;
                     }
                     vertex_attribute_description.push(vk::VertexInputAttributeDescription::builder()
-                        .location(input.location as _)
+                        .location(input.location)
                         .format(input.property_type)
                         .offset(input.offset)
                         .build());
@@ -147,10 +147,10 @@ impl Pipeline {
 
         let mut color_blend_attachment = Vec::<vk::PipelineColorBlendAttachmentState>::new();
 
-        for _ in &render_pass.config().color_attachments
+        for _ in 0..render_pass.config().color_attachments.len()
         {
             color_blend_attachment.push(vk::PipelineColorBlendAttachmentState::builder()
-                .blend_enable(if config.alpha_mode == AlphaMode::Opaque { false } else { true })
+                .blend_enable(config.alpha_mode != AlphaMode::Opaque)
                 .src_color_blend_factor(if config.alpha_mode == AlphaMode::Opaque { vk::BlendFactor::ZERO } else { vk::BlendFactor::SRC_ALPHA })
                 .dst_color_blend_factor(if config.alpha_mode == AlphaMode::Opaque { vk::BlendFactor::ZERO } else { vk::BlendFactor::ONE_MINUS_SRC_ALPHA })
                 .color_blend_op(vk::BlendOp::ADD)
@@ -163,11 +163,13 @@ impl Pipeline {
 
 
         let mut stage_modules = vec![];
+        let mut entry_point_names = vec![];
         for stage in &stages {
+            entry_point_names.push(format!("{}\0", stage.infos().entry_point));
             stage_modules.push(vk::PipelineShaderStageCreateInfo::builder()
                                    .stage(stage.infos().stage)
                                    .module(*stage.shader_module())
-                                   .name(stage.infos().entry_point.as_bytes())
+                                   .name(entry_point_names.last().unwrap().as_bytes())
                                    .build())
         }
 
@@ -202,11 +204,11 @@ impl Pipeline {
             .base_pipeline_index(-1)
             .build();
 
+        let (pipeline, success_code) = unsafe { device.create_graphics_pipelines(vk::PipelineCache::default(), &[ci_pipeline], None) }?;
+
         for stage in &mut stages {
             stage.destroy(device)?;
         }
-
-        let (pipeline, success_code) = unsafe { device.create_graphics_pipelines(vk::PipelineCache::default(), &[ci_pipeline], None) }?;
 
         if success_code != SuccessCode::SUCCESS || pipeline.len() != 1 {
             return Err(anyhow!("Failed to create pipeline : {:?}", success_code))
