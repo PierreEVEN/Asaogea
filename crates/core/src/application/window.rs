@@ -67,7 +67,15 @@ impl AppWindow {
     pub fn surface(&self) -> Result<&RwSLock<Surface>, Error> {
         self.surface.as_ref().ok_or(anyhow!("Surface is not valid. Window::init() have not been called or the windows have been destroyed"))
     }
-    
+
+    pub fn width(&self) -> Result<u32, Error> {
+        Ok(self.window.as_ref().ok_or(anyhow!("Window is null"))?.inner_size().width)
+    }
+
+    pub fn height(&self) -> Result<u32, Error> {
+        Ok(self.window.as_ref().ok_or(anyhow!("Window is null"))?.inner_size().height)
+    }
+
     pub fn window_event(&mut self, ctx: &CtxEngine, event_loop: &ActiveEventLoop, event: WindowEvent) -> Result<(), Error> {
         match event {
             WindowEvent::CloseRequested => {

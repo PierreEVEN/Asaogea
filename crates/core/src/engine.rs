@@ -7,6 +7,7 @@ use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
+use macros::ResourceObject;
 use types::rwslock::RwSLock;
 use crate::application::gfx::device::Device;
 use crate::application::gfx::instance::{GfxConfig, Instance};

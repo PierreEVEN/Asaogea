@@ -196,7 +196,7 @@ impl Surface {
                 .iter()
                 .for_each(|f| device.ptr().destroy_framebuffer(*f, None));
 
-            device.command_pool().free(ctx, &self.command_buffer)?;
+            device.command_pool().free(ctx.ctx_engine(), &self.command_buffer)?;
             self.command_buffer.clear();
 
             self.swapchain_image_views
@@ -316,11 +316,24 @@ impl Surface {
         unsafe { device.ptr().cmd_begin_render_pass(self.command_buffer[image_index], &info, vk::SubpassContents::INLINE); }
 
 
+        unsafe {
+            device.ptr().cmd_set_viewport(self.command_buffer[image_index], 0, &[vk::Viewport::builder()
+                .x(0.0)
+                .y(self.swapchain_extent.height as _)
+                .width(self.swapchain_extent.width as _)
+                .height(-(self.swapchain_extent.height as f32))
+                .min_depth(0.0)
+                .max_depth(1.0)
+                .build()
+            ])
+        };
+        
+
         if self.imgui_temp.is_none() {
             self.imgui_temp = Some(ImGui::new(ctx)?);
         }
 
-        self.imgui_temp.as_mut().unwrap().render(&self.command_buffer[image_index], ctx);
+        self.imgui_temp.as_mut().unwrap().render(ctx, &self.command_buffer[image_index])?;
 
 
         unsafe { device.ptr().cmd_end_render_pass(self.command_buffer[image_index]); }

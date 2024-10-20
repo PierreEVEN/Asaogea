@@ -1,8 +1,9 @@
 use crate::application::gfx::render_pass::RenderPass;
 use crate::application::gfx::resources::shader_module::ShaderStage;
-use anyhow::{Error};
+use anyhow::{anyhow, Error};
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, ShaderStageFlags};
 use vulkanalia::vk;
+use crate::application::window::CtxAppWindow;
 
 pub struct Pipeline {
     pipeline_layout: Option<vk::PipelineLayout>,
@@ -159,7 +160,7 @@ impl Pipeline {
             .min_depth_bounds(0.0)
             .max_depth_bounds(1.0)
             .build();
-        
+
         // Create descriptor sets
         let mut bindings = Vec::<vk::DescriptorSetLayoutBinding>::new();
         for stage in &stages {
@@ -233,10 +234,24 @@ impl Pipeline {
         })
     }
 
-    pub fn destroy(&mut self, device: &vulkanalia::Device) {
-        unsafe { device.destroy_pipeline_layout(self.pipeline_layout.take().expect("Shader module have already been destroyed"), None); }
-        unsafe { device.destroy_descriptor_set_layout(self.descriptor_set_layout.take().expect("Shader module have already been destroyed"), None); }
-        unsafe { device.destroy_pipeline(self.pipeline.take().expect("Shader module have already been destroyed"), None); }
+    pub fn ptr_pipeline(&self) -> Result<&vk::Pipeline, Error> {
+        self.pipeline.as_ref().ok_or(anyhow!("pipeline have been destroyed"))
+    }
+
+    pub fn descriptor_set_layout(&self) -> Result<&vk::DescriptorSetLayout, Error> {
+        self.descriptor_set_layout.as_ref().ok_or(anyhow!("descriptor set layout have been destroyed"))
+    }
+
+    pub fn ptr_pipeline_layout(&self) -> Result<&vk::PipelineLayout, Error> {
+        self.pipeline_layout.as_ref().ok_or(anyhow!("pipeline layout have been destroyed"))
+    }
+    
+    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error>{
+        let device = ctx.engine().device()?;
+        unsafe { device.ptr().destroy_pipeline_layout(self.pipeline_layout.take().expect("Shader module have already been destroyed"), None); }
+        unsafe { device.ptr().destroy_descriptor_set_layout(self.descriptor_set_layout.take().expect("Shader module have already been destroyed"), None); }
+        unsafe { device.ptr().destroy_pipeline(self.pipeline.take().expect("Shader module have already been destroyed"), None); }
+        Ok(())
     }
 }
 

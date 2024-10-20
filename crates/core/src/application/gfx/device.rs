@@ -5,6 +5,7 @@ use tracing::{info, warn};
 use vulkanalia::{vk};
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0, KhrSurfaceExtension, Queue};
 use crate::application::gfx::command_buffer::CommandPool;
+use crate::application::gfx::descriptor_pool::DescriptorPool;
 use crate::application::gfx::instance::{GfxConfig};
 use crate::application::gfx::surface::Surface;
 use crate::application::window::CtxAppWindow;
@@ -18,7 +19,7 @@ pub struct PhysicalDevice {
 pub struct QueueFamilyIndices {
     pub graphics: u32,
     pub present: u32,
-    pub transfer: Option<u32>,
+    pub transfer: u32,
     pub compute: Option<u32>,
 }
 
@@ -57,11 +58,8 @@ impl QueueFamilyIndices {
             }
         }
 
-        let present = match present {
-            None => { return Err(anyhow!("Failed to find present queue family.")) }
-            Some(present) => { present }
-        };
-
+        let present = present.ok_or(anyhow!("Failed to find present queue family."))?;
+        let transfer = transfer.ok_or(anyhow!("Failed to find transfer queue family."))?;
 
         if let Some(graphics) = graphics {
             Ok(Self { graphics, transfer, compute, present })
@@ -82,7 +80,6 @@ impl SwapchainSupport {
         let surface = *surface.ptr()?;
         let instance = ctx.engine().instance()?;
         unsafe {
-            
             Ok(Self {
                 capabilities: instance.ptr()?.get_physical_device_surface_capabilities_khr(physical_device, surface)?,
                 formats: instance.ptr()?.get_physical_device_surface_formats_khr(physical_device, surface)?,
@@ -154,7 +151,10 @@ pub struct Device {
     device: Option<vulkanalia::Device>,
     graphics_queue: Queue,
     present_queue: Queue,
+    transfer_queue: Queue,
     command_pool: Option<CommandPool>,
+    allocator: Option<vulkanalia_vma::Allocator>,
+    descriptor_pool: Option<DescriptorPool>,
 }
 
 impl Device {
@@ -187,22 +187,30 @@ impl Device {
         let device = unsafe { ctx.engine().instance()?.ptr()?.create_device(physical_device.physical_device, &info, None)? };
 
 
-
-
         let graphics_queue = unsafe {
             device.get_device_queue(physical_device.queue_family_indices.graphics, 0)
         };
         let present_queue = unsafe {
             device.get_device_queue(physical_device.queue_family_indices.present, 0)
         };
+        let transfer_queue = unsafe {
+            device.get_device_queue(physical_device.queue_family_indices.transfer, 0)
+        };
         let command_pool = CommandPool::new(&device, physical_device.queue_families_indices())?;
 
-        Ok(Self { physical_device, device: Some(device), graphics_queue, present_queue, command_pool: Some(command_pool) })
+        let instance = ctx.engine().instance()?;
+        let infos = vulkanalia_vma::AllocatorOptions::new(instance.ptr()?, &device, *physical_device.ptr());
+        let allocator = unsafe { vulkanalia_vma::Allocator::new(&infos) }?;
+        let descriptor_pool = DescriptorPool::new(&device)?;
+
+        Ok(Self { physical_device, device: Some(device), graphics_queue, present_queue, transfer_queue, command_pool: Some(command_pool), allocator: Some(allocator), descriptor_pool: Some(descriptor_pool) })
     }
 
-    pub fn command_pool(&self) -> &CommandPool {
-        self.command_pool.as_ref().expect("Command pool have been destroyed")
-    }
+    pub fn command_pool(&self) -> &CommandPool { self.command_pool.as_ref().expect("Command pool have been destroyed") }
+
+    pub fn allocator(&self) -> &vulkanalia_vma::Allocator { self.allocator.as_ref().expect("Allocator pool have been destroyed") }
+
+    pub fn descriptor_pool(&self) -> &DescriptorPool { self.descriptor_pool.as_ref().expect("Descriptor pool have been destroyed") }
 
     pub fn physical_device(&self) -> &PhysicalDevice {
         &self.physical_device
@@ -217,6 +225,10 @@ impl Device {
         &self.present_queue
     }
 
+    pub fn transfer_queue(&self) -> &Queue {
+        &self.transfer_queue
+    }
+
     pub fn ptr(&self) -> &vulkanalia::Device {
         self.device.as_ref().expect("Device have not been initialized yet")
     }
@@ -228,6 +240,14 @@ impl Device {
                     command_pool.destroy(&device);
                 }
                 self.command_pool = None;
+
+                if let Some(descriptor_pool) = &mut self.descriptor_pool {
+                    descriptor_pool.destroy(&device)?;
+                }
+                self.descriptor_pool = None;
+
+                self.allocator = None;
+
                 device.destroy_device(None)
             };
             Ok(())
@@ -245,7 +265,7 @@ impl Deref for Device {
 
 impl Drop for Device {
     fn drop(&mut self) {
-        if self.device.is_some() {
+        if self.device.is_some() || self.allocator.is_some() || self.descriptor_pool.is_some() {
             panic!("Logical device have not been destroyed using Device::destroy()");
         }
     }
