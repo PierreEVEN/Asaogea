@@ -1,5 +1,4 @@
 use std::slice;
-use std::sync::Arc;
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
 use vulkanalia::vk::{CopyDescriptorSet, DescriptorImageInfo, DescriptorSetLayout, DeviceV1_0, HasBuilder};

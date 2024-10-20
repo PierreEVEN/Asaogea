@@ -3,7 +3,7 @@ use anyhow::{anyhow, Error};
 use std::ops::Deref;
 use vulkanalia::vk;
 use vulkanalia::vk::{HasBuilder};
-use vulkanalia_vma::{Alloc, AllocationCreateFlags, MemoryUsage};
+use vulkanalia_vma::{Alloc, AllocationCreateFlags};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum BufferAccess

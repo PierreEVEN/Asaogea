@@ -91,14 +91,14 @@ impl AppWindow {
 
     pub fn window_event(&mut self, ctx: &CtxEngine, event_loop: &ActiveEventLoop, event: WindowEvent) -> Result<(), Error> {
         match event {
-            WindowEvent::CursorMoved { device_id, position } => {
+            WindowEvent::CursorMoved { device_id: _device_id, position } => {
                 self.mouse_x = position.x;
                 self.mouse_y = position.y;
             }
-            WindowEvent::MouseInput { device_id, state: ElementState, button: MouseButton } => {
-                match ElementState {
+            WindowEvent::MouseInput { device_id: _device_id, state: element_state, button: mouse_button } => {
+                match element_state {
                     ElementState::Pressed => {
-                        match MouseButton {
+                        match mouse_button {
                             MouseButton::Left => { self.left_pressed = true }
                             MouseButton::Right => { self.right_pressed = true }
                             MouseButton::Middle => {}
@@ -108,7 +108,7 @@ impl AppWindow {
                         }
                     }
                     ElementState::Released => {
-                        match MouseButton {
+                        match mouse_button {
                             MouseButton::Left => { self.left_pressed = false }
                             MouseButton::Right => { self.right_pressed = false }
                             MouseButton::Middle => {}

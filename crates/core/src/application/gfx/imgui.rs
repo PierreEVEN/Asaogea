@@ -66,10 +66,10 @@ pub struct ImGui {
 }
 
 pub struct ImGuiPushConstants {
-    scale_x: f32,
-    scale_y: f32,
-    translate_x: f32,
-    translate_y: f32,
+    _scale_x: f32,
+    _scale_y: f32,
+    _translate_x: f32,
+    _translate_y: f32,
 }
 
 impl ImGui {
@@ -310,7 +310,7 @@ impl ImGui {
 
         unsafe {
             device.ptr().cmd_push_constants(*command_buffer, *self.pipeline.as_ref().unwrap().ptr_pipeline_layout()?, vk::ShaderStageFlags::VERTEX, 0,
-                                            unsafe { ::std::slice::from_raw_parts(&push_constants as *const ImGuiPushConstants as *const u8, size_of::<ImGuiPushConstants>()) },
+                                            slice::from_raw_parts(&push_constants as *const ImGuiPushConstants as *const u8, size_of::<ImGuiPushConstants>()),
             );
         }
 

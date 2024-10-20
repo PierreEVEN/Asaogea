@@ -4,8 +4,8 @@ use crate::application::window::CtxAppWindow;
 use crate::engine::CtxEngine;
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
-use vulkanalia::vk::{DeviceV1_0, FenceCreateInfo, Handle, HasBuilder, ImageViewCreateInfo};
-use vulkanalia_vma::{Alloc, MemoryUsage};
+use vulkanalia::vk::{DeviceV1_0, FenceCreateInfo, HasBuilder};
+use vulkanalia_vma::Alloc;
 
 pub struct Image {
     image: Option<vk::Image>,

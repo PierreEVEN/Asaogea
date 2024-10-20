@@ -2,7 +2,6 @@ use anyhow::{anyhow, Error};
 use vulkanalia::vk;
 use vulkanalia::vk::{CommandBufferBeginInfo, CommandBufferUsageFlags, DeviceV1_0, HasBuilder};
 use crate::application::gfx::device::{Device, QueueFamilyIndices};
-use crate::application::window::CtxAppWindow;
 use crate::engine::CtxEngine;
 
 pub struct CommandPool {
