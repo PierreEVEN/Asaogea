@@ -1,7 +1,6 @@
 use crate::application::gfx::command_buffer::CommandBuffer;
+use crate::application::gfx::device::DeviceSharedData;
 use crate::application::gfx::resources::buffer::{Buffer, BufferAccess};
-use crate::application::window::CtxAppWindow;
-use crate::engine::CtxEngine;
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, FenceCreateInfo, HasBuilder};
@@ -13,6 +12,7 @@ pub struct Image {
     view: Option<vk::ImageView>,
     create_infos: ImageCreateOptions,
     current_layout: vk::ImageLayout,
+    ctx: DeviceSharedData
 }
 
 pub struct ImageCreateOptions {
@@ -28,7 +28,7 @@ pub struct ImageCreateOptions {
 
 
 impl Image {
-    pub fn new(ctx: &CtxAppWindow, create_infos: ImageCreateOptions) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceSharedData, create_infos: ImageCreateOptions) -> Result<Self, Error> {
         let infos = vk::ImageCreateInfo::builder()
             .image_type(create_infos.image_type)
             .format(create_infos.format)
@@ -42,7 +42,8 @@ impl Image {
             .build();
 
         let allocation_options = vulkanalia_vma::AllocationOptions::default();
-        let (image, allocation) = unsafe { ctx.engine().device()?.allocator().create_image(infos, &allocation_options) }?;
+        println!("Create image");
+        let (image, allocation) = unsafe { ctx.allocator().create_image(infos, &allocation_options) }?;
 
         let image_view_ci = vk::ImageViewCreateInfo::builder()
             .image(image)
@@ -58,7 +59,7 @@ impl Image {
                 .build())
             .build();
 
-        let image_view = unsafe { ctx.engine().device()?.ptr().create_image_view(&image_view_ci, None)? };
+        let image_view = unsafe { ctx.device().create_image_view(&image_view_ci, None)? };
 
         Ok(Self {
             image: Some(image),
@@ -66,23 +67,22 @@ impl Image {
             view: Some(image_view),
             create_infos,
             current_layout: vk::ImageLayout::UNDEFINED,
+            ctx,
         })
     }
 
-    pub fn set_data(&mut self, ctx: &CtxEngine, data: &[u8]) -> Result<(), Error> {
-        let mut transfer_buffer = Buffer::new(ctx, data.len(), crate::application::gfx::resources::buffer::BufferCreateInfo { usage: vk::BufferUsageFlags::TRANSFER_SRC, access: BufferAccess::CpuToGpu })?;
+    pub fn set_data(&mut self, data: &[u8]) -> Result<(), Error> {
+        let mut transfer_buffer = Buffer::new(self.ctx.clone(), data.len(), crate::application::gfx::resources::buffer::BufferCreateInfo { usage: vk::BufferUsageFlags::TRANSFER_SRC, access: BufferAccess::CpuToGpu })?;
 
-        let device = ctx.engine.device()?;
+        transfer_buffer.set_data( 0, data)?;
 
-        transfer_buffer.set_data(ctx, 0, data)?;
+        let mut command_buffer = CommandBuffer::new(self.ctx.clone())?;
+        command_buffer.begin_one_time()?;
 
-        let mut command_buffer = CommandBuffer::new(ctx)?;
-        command_buffer.begin_one_time(ctx)?;
-
-        self.set_image_layout(ctx, command_buffer.ptr()?, vk::ImageLayout::TRANSFER_DST_OPTIMAL)?;
+        self.set_image_layout(command_buffer.ptr()?, vk::ImageLayout::TRANSFER_DST_OPTIMAL)?;
         // GPU copy command
         unsafe {
-            device.ptr().cmd_copy_buffer_to_image(
+            self.ctx.device().cmd_copy_buffer_to_image(
                 *command_buffer.ptr()?,
                 *transfer_buffer.ptr()?,
                 self.image.ok_or(anyhow!("invalid image"))?,
@@ -102,30 +102,27 @@ impl Image {
                     .build()]);
         }
 
-        self.set_image_layout(ctx, command_buffer.ptr()?, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
-        command_buffer.end(ctx)?;
+        self.set_image_layout(command_buffer.ptr()?, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
+        command_buffer.end()?;
 
         let submit_info = vk::SubmitInfo::builder()
             .command_buffers(&[*command_buffer.ptr()?])
             .build();
 
         let infos = FenceCreateInfo::builder();
-        let fence = unsafe { ctx.engine.device()?.ptr().create_fence(&infos, None) }?;
+        let fence = unsafe { self.ctx.device().create_fence(&infos, None) }?;
 
-        unsafe { device.ptr().queue_submit(*device.transfer_queue(), &[submit_info], fence) }?;
+        unsafe { self.ctx.device().queue_submit(self.ctx.queues().transfer, &[submit_info], fence) }?;
 
-        unsafe { ctx.engine.device()?.ptr().wait_for_fences(&[fence], true, u64::MAX)?; }
+        unsafe { self.ctx.device().wait_for_fences(&[fence], true, u64::MAX)?; }
 
-        unsafe { ctx.engine.device()?.ptr().destroy_fence(fence, None) };
-        transfer_buffer.destroy(ctx)?;
-        command_buffer.destroy(ctx)?;
+        unsafe { self.ctx.device().destroy_fence(fence, None) };
 
         Ok(())
     }
 
 
-    fn set_image_layout(&mut self, ctx: &CtxEngine, command_buffer: &vk::CommandBuffer, new_layout: vk::ImageLayout) -> Result<(), Error> {
-        let device = &ctx.engine.device()?;
+    fn set_image_layout(&mut self, command_buffer: &vk::CommandBuffer, new_layout: vk::ImageLayout) -> Result<(), Error> {
         let mut barrier = vk::ImageMemoryBarrier::builder()
             .old_layout(self.current_layout)
             .new_layout(new_layout)
@@ -162,7 +159,7 @@ impl Image {
         unsafe {
             let memory_barriers: [vk::MemoryBarrier; 0] = [];
             let buffer_memory_barriers: [vk::BufferMemoryBarrier; 0] = [];
-            device.ptr().cmd_pipeline_barrier(
+            self.ctx.device().cmd_pipeline_barrier(
                 *command_buffer,
                 source_destination_stages.0,
                 source_destination_stages.1,
@@ -171,16 +168,6 @@ impl Image {
                 &buffer_memory_barriers,
                 &[barrier]);
         }
-        Ok(())
-    }
-
-    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
-        let device = ctx.engine().device()?;
-
-        unsafe { device.allocator().destroy_image(self.image.take().unwrap(), self.allocation.unwrap()) };
-
-        unsafe { device.ptr().destroy_image_view(self.view.take().unwrap(), None) };
-
         Ok(())
     }
 
@@ -199,8 +186,10 @@ impl Image {
 
 impl Drop for Image {
     fn drop(&mut self) {
-        if self.view.is_some() || self.image.is_some() || self.view.is_some() {
-            panic!("Image has not been destroyed using Image::destroy()");
-        }
+        println!("Destroy image");
+        unsafe { self.ctx.allocator().destroy_image(self.image.take().unwrap(), self.allocation.unwrap()) };
+
+        unsafe { self.ctx.device().destroy_image_view(self.view.take().unwrap(), None) };
+
     }
 }

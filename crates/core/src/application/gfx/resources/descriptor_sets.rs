@@ -1,11 +1,15 @@
 use std::slice;
+use std::sync::Weak;
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
 use vulkanalia::vk::{CopyDescriptorSet, DescriptorImageInfo, DescriptorSetLayout, DeviceV1_0, HasBuilder};
+use crate::application::gfx::descriptor_pool::DescriptorPool;
+use crate::application::gfx::device::DeviceSharedData;
 use crate::application::window::CtxAppWindow;
 
 pub struct DescriptorSets {
     desc_set: Option<vk::DescriptorSet>,
+    ctx: DeviceSharedData
 }
 pub enum ShaderInstanceBinding {
     Sampler(vk::Sampler),
@@ -13,14 +17,15 @@ pub enum ShaderInstanceBinding {
 }
 
 impl DescriptorSets {
-    pub fn new(ctx: &CtxAppWindow, layout: &DescriptorSetLayout) -> Result<Self, Error> {
-        let desc_set = ctx.engine().device()?.descriptor_pool().allocate(ctx, *layout)?;
+    pub fn new(ctx: DeviceSharedData, layout: &DescriptorSetLayout) -> Result<Self, Error> {
+        let desc_set = ctx.descriptor_pool().allocate(*layout)?;
         Ok(Self {
-            desc_set: Some(desc_set)
+            desc_set: Some(desc_set),
+            ctx,
         })
     }
 
-    pub fn update(&mut self, ctx: &CtxAppWindow, bindings: Vec<(ShaderInstanceBinding, u32)>) -> Result<(), Error> {
+    pub fn update(&mut self, bindings: Vec<(ShaderInstanceBinding, u32)>) -> Result<(), Error> {
         let mut desc_images = Vec::new();
 
         let mut write_desc_set = Vec::new();
@@ -52,7 +57,7 @@ impl DescriptorSets {
 
         let copies = Vec::<CopyDescriptorSet>::new();
         
-        unsafe { ctx.engine().device()?.ptr().update_descriptor_sets(write_desc_set.as_slice(), copies.as_slice()); }
+        unsafe { self.ctx.device().update_descriptor_sets(write_desc_set.as_slice(), copies.as_slice()); }
 
         Ok(())
     }
@@ -60,17 +65,10 @@ impl DescriptorSets {
     pub fn ptr(&self) -> Result<&vk::DescriptorSet, Error> {
         self.desc_set.as_ref().ok_or(anyhow!("Descriptor set is not valid"))
     }
-
-    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
-        ctx.engine().device()?.descriptor_pool().free(ctx, self.desc_set.take().unwrap())?;
-        Ok(())
-    }
 }
 
 impl Drop for DescriptorSets {
     fn drop(&mut self) {
-        if self.desc_set.is_some() {
-            panic!("Descriptor set have not been destroyed")
-        }
+        self.ctx.descriptor_pool().free(self.desc_set.take().unwrap()).unwrap();
     }
 }

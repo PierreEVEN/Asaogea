@@ -14,3 +14,4 @@ winit = "0.30.5"
 anyhow = "1.0.89"
 tracing = "0.1.40"
 imgui = { version = "0.12.0", features = ["docking"] }
+rand = "0.9.0-alpha.2"

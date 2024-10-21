@@ -10,6 +10,7 @@ use anyhow::Error;
 use imgui::sys::{igCreateContext, igEndFrame, igGetDrawData, igGetIO, igGetMainViewport, igGetStyle, igNewFrame, igRender, igShowDemoWindow, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImVec2, ImVec4};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::ffi::c_char;
+use std::ops::Deref;
 use std::ptr::null_mut;
 use std::slice;
 use vulkanalia::vk;
@@ -184,7 +185,7 @@ impl ImGui {
         unsafe { ImFontAtlas_GetTexDataAsRGBA32(io.Fonts, &mut pixels, &mut width, &mut height, null_mut()) }
         let data_size = width * height * 4i32;
 
-        let mut font_texture = Image::new(ctx, ImageCreateOptions {
+        let mut font_texture = Image::new(ctx.engine().device()?.shared_data(), ImageCreateOptions {
             image_type: ImageType::_2D,
             format: vk::Format::R8G8B8A8_UNORM,
             usage: vk::ImageUsageFlags::SAMPLED,
@@ -196,21 +197,21 @@ impl ImGui {
         }).unwrap();
 
         unsafe {
-            font_texture.set_data(ctx.ctx_engine(), Vec::from_raw_parts(pixels, data_size as usize, data_size as usize).as_slice()).unwrap();
+            font_texture.set_data(Vec::from_raw_parts(pixels, data_size as usize, data_size as usize).as_slice()).unwrap();
         }
 
-        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.ctx_engine(), MeshCreateInfos {
+        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.engine().device()?.shared_data(), MeshCreateInfos {
             index_type: IndexBufferType::Uint16,
         })?;
 
 
         //unsafe { (&mut *io.Fonts).TexID = font_texture.__static_view_handle() as ImTextureID; }
 
-        let mut desc_set = DescriptorSets::new(ctx, pipeline.descriptor_set_layout()?)?;
+        let mut desc_set = DescriptorSets::new(ctx.engine().device()?.shared_data(), pipeline.descriptor_set_layout()?)?;
 
         let sampler = Sampler::new(ctx)?;
 
-        desc_set.update(ctx, vec![
+        desc_set.update(vec![
             (ShaderInstanceBinding::SampledImage(*font_texture.view()?, *font_texture.layout()), 0),
             (ShaderInstanceBinding::Sampler(*sampler.ptr()?), 1),
         ])?;
@@ -270,8 +271,7 @@ impl ImGui {
             {
                 let cmd_list = &**draw_data.CmdLists.offset(n as isize);
 
-                self.mesh.as_mut().unwrap().set_data(ctx.ctx_engine(),
-                                                     vertex_start,
+                self.mesh.as_mut().unwrap().set_data(vertex_start,
                                                      slice::from_raw_parts(
                                                          cmd_list.VtxBuffer.Data as *const u8,
                                                          cmd_list.VtxBuffer.Size as usize * size_of::<ImDrawVert>(),
@@ -417,14 +417,8 @@ impl ImGui {
         if let Some(pipeline) = &mut self.pipeline {
             pipeline.destroy(ctx)?;
         }
-        if let Some(font_texture) = &mut self.font_texture {
-            font_texture.destroy(ctx)?;
-        }
         if let Some(sampler) = &mut self.sampler {
             sampler.destroy(ctx)?;
-        }
-        if let Some(descriptor_sets) = &mut self.descriptor_sets {
-            descriptor_sets.destroy(ctx)?;
         }
         self.sampler = None;
         self.font_texture = None;

@@ -1,5 +1,7 @@
 use std::collections::HashSet;
+use std::mem::MaybeUninit;
 use std::ops::Deref;
+use std::sync::{Arc, Weak};
 use anyhow::{anyhow, Error};
 use tracing::{info, warn};
 use vulkanalia::{vk};
@@ -148,13 +150,54 @@ impl PhysicalDevice {
 
 pub struct Device {
     physical_device: PhysicalDevice,
-    device: Option<vulkanalia::Device>,
-    graphics_queue: Queue,
-    present_queue: Queue,
-    transfer_queue: Queue,
-    command_pool: Option<CommandPool>,
-    allocator: Option<vulkanalia_vma::Allocator>,
-    descriptor_pool: Option<DescriptorPool>,
+    shared_data_internal: Arc<DeviceSharedDataInternal>,
+}
+
+pub struct DeviceQueues {
+    pub graphic: Queue,
+    pub present_queue: Queue,
+    pub transfer: Queue,
+}
+
+#[derive(Clone)]
+pub struct DeviceSharedData(Weak<DeviceSharedDataInternal>);
+
+impl Deref for DeviceSharedData {
+    type Target = DeviceSharedDataInternal;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.upgrade().as_ref().unwrap()
+    }
+}
+
+struct DeviceSharedDataInternal {
+    allocator: MaybeUninit<vulkanalia_vma::Allocator>,
+    descriptor_pool: MaybeUninit<DescriptorPool>,
+    command_pool: MaybeUninit<CommandPool>,
+    device: vulkanalia::Device,
+    queues: DeviceQueues,
+}
+
+impl DeviceSharedData {
+    pub fn device(&self) -> &vulkanalia::Device {
+        &self.device
+    }
+
+    pub fn allocator(&self) -> &vulkanalia_vma::Allocator {
+        unsafe { &self.allocator.assume_init_ref() }
+    }
+
+    pub fn descriptor_pool(&self) -> &DescriptorPool {
+        unsafe { &self.descriptor_pool.assume_init_ref() }
+    }
+
+    pub fn command_pool(&self) -> &CommandPool {
+        unsafe { &self.command_pool.assume_init_ref() }
+    }
+
+    pub fn queues(&self) -> &DeviceQueues {
+        &self.queues
+    }
 }
 
 impl Device {
@@ -203,55 +246,38 @@ impl Device {
         let allocator = unsafe { vulkanalia_vma::Allocator::new(&infos) }?;
         let descriptor_pool = DescriptorPool::new(&device)?;
 
-        Ok(Self { physical_device, device: Some(device), graphics_queue, present_queue, transfer_queue, command_pool: Some(command_pool), allocator: Some(allocator), descriptor_pool: Some(descriptor_pool) })
+        let shared_data = Arc::new(DeviceSharedDataInternal {
+            allocator: MaybeUninit::new(allocator),
+            descriptor_pool: MaybeUninit::new(descriptor_pool),
+            command_pool: MaybeUninit::new(command_pool),
+            device,
+            queues: DeviceQueues { graphic: graphics_queue, present_queue, transfer: transfer_queue },
+        });
+        descriptor_pool.init(DeviceSharedData(Arc::downgrade(&shared_data)));
+
+        Ok(Self { physical_device, shared_data_internal: shared_data })
     }
-
-    pub fn command_pool(&self) -> &CommandPool { self.command_pool.as_ref().expect("Command pool have been destroyed") }
-
-    pub fn allocator(&self) -> &vulkanalia_vma::Allocator { self.allocator.as_ref().expect("Allocator pool have been destroyed") }
-
-    pub fn descriptor_pool(&self) -> &DescriptorPool { self.descriptor_pool.as_ref().expect("Descriptor pool have been destroyed") }
 
     pub fn physical_device(&self) -> &PhysicalDevice {
         &self.physical_device
     }
 
-
-    pub fn graphic_queue(&self) -> &Queue {
-        &self.graphics_queue
-    }
-
-    pub fn present_queue(&self) -> &Queue {
-        &self.present_queue
-    }
-
-    pub fn transfer_queue(&self) -> &Queue {
-        &self.transfer_queue
-    }
-
     pub fn ptr(&self) -> &vulkanalia::Device {
-        self.device.as_ref().expect("Device have not been initialized yet")
+        &self.shared_data_internal.device
+    }
+
+    pub fn shared_data(&self) -> DeviceSharedData {
+        DeviceSharedData(Arc::downgrade(&self.shared_data_internal))
     }
 
     pub fn destroy(&mut self) -> Result<(), Error> {
         unsafe {
-            if let Some(device) = self.device.take() {
-                if let Some(command_pool) = &mut self.command_pool {
-                    command_pool.destroy(&device);
-                }
-                self.command_pool = None;
-
-                if let Some(descriptor_pool) = &mut self.descriptor_pool {
-                    descriptor_pool.destroy(&device)?;
-                }
-                self.descriptor_pool = None;
-
-                self.allocator = None;
-
-                device.destroy_device(None)
-            };
-            Ok(())
-        }
+            self.shared_data_internal.command_pool.assume_init_read();
+            self.shared_data_internal.descriptor_pool.assume_init_read();
+            self.shared_data_internal.allocator.assume_init_read();
+            self.shared_data_internal.device.destroy_device(None);
+        };
+        Ok(())
     }
 }
 
@@ -264,9 +290,5 @@ impl Deref for Device {
 }
 
 impl Drop for Device {
-    fn drop(&mut self) {
-        if self.device.is_some() || self.allocator.is_some() || self.descriptor_pool.is_some() {
-            panic!("Logical device have not been destroyed using Device::destroy()");
-        }
-    }
+    fn drop(&mut self) {}
 }

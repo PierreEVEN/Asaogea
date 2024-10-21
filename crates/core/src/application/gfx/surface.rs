@@ -137,7 +137,7 @@ impl Surface {
 
         self.update_swapchain_images(&*device, &swapchain_support)?;
 
-        self.command_buffer = device.command_pool().allocate(&*device, self.swapchain_images.len() as u32)?;
+        self.command_buffer = device.shared_data().command_pool().allocate(self.swapchain_images.len() as u32)?;
 
         *self.images_in_flight.write() = self.swapchain_images
             .iter()
@@ -196,7 +196,7 @@ impl Surface {
                 .iter()
                 .for_each(|f| device.ptr().destroy_framebuffer(*f, None));
 
-            device.command_pool().free(ctx.ctx_engine(), &self.command_buffer)?;
+            device.shared_data().command_pool().free(&self.command_buffer)?;
             self.command_buffer.clear();
 
             self.swapchain_image_views
@@ -335,7 +335,6 @@ impl Surface {
 
         self.imgui_temp.as_mut().unwrap().render(ctx, &self.command_buffer[image_index])?;
 
-
         unsafe { device.ptr().cmd_end_render_pass(self.command_buffer[image_index]); }
         unsafe { device.ptr().end_command_buffer(self.command_buffer[image_index])?; }
 
@@ -349,7 +348,7 @@ impl Surface {
             .command_buffers(command_buffers)
             .signal_semaphores(signal_semaphores);
 
-        unsafe { device.ptr().queue_submit(*device.graphic_queue(), &[submit_info], self.in_flight_fences[frame])?; }
+        unsafe { device.ptr().queue_submit(device.shared_data().queues().graphic, &[submit_info], self.in_flight_fences[frame])?; }
 
 
         let swapchains = &[swapchain];
@@ -359,7 +358,7 @@ impl Surface {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        let result = unsafe { device.ptr().queue_present_khr(*device.present_queue(), &present_info) };
+        let result = unsafe { device.ptr().queue_present_khr(device.shared_data().queues().present_queue, &present_info) };
 
         let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
 

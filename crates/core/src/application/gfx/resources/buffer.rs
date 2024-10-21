@@ -1,9 +1,12 @@
 use crate::engine::CtxEngine;
 use anyhow::{anyhow, Error};
+use std::hash::Hash;
 use std::ops::Deref;
+use std::sync::Weak;
 use vulkanalia::vk;
-use vulkanalia::vk::{HasBuilder};
+use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia_vma::{Alloc, AllocationCreateFlags};
+use crate::application::gfx::device::DeviceSharedData;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum BufferAccess
@@ -29,10 +32,11 @@ pub struct Buffer {
     buffer_memory: Option<vulkanalia_vma::Allocation>,
     size: usize,
     create_infos: BufferCreateInfo,
+    ctx: DeviceSharedData
 }
 
 impl Buffer {
-    pub fn new(ctx: &CtxEngine, mut size: usize, create_infos: BufferCreateInfo) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceSharedData, mut size: usize, create_infos: BufferCreateInfo) -> Result<Self, Error> {
         if size == 0 {
             size = 1;
         }
@@ -41,12 +45,13 @@ impl Buffer {
             buffer_memory: None,
             create_infos,
             size,
+            ctx,
         };
-        buffer.create(ctx)?;
+        buffer.create()?;
         Ok(buffer)
     }
 
-    pub fn resize(&mut self, ctx: &CtxEngine, mut size: usize) -> Result<(), Error> {
+    pub fn resize(&mut self, mut size: usize) -> Result<(), Error> {
         if size == 0 {
             size = 1;
         }
@@ -54,23 +59,23 @@ impl Buffer {
             return Ok(());
         }
 
-        self.destroy(ctx)?;
+        self.destroy();
 
         self.size = size;
 
-        self.create(ctx)?;
+        self.create()?;
 
         Ok(())
     }
 
-    pub fn set_data(&mut self, ctx: &CtxEngine, start_offset: usize, data: &[u8]) -> Result<(), Error> {
+    pub fn set_data(&mut self, start_offset: usize, data: &[u8]) -> Result<(), Error> {
         if start_offset + data.len() > self.size {
             return Err(anyhow!("buffer is to small : size={}, expected={}", self.size, start_offset + data.len()));
         }
         unsafe {
-            let mapped_memory = ctx.engine.device()?.allocator().map_memory(self.buffer_memory.unwrap()).unwrap();
+            let mapped_memory = self.ctx.allocator().map_memory(self.buffer_memory.unwrap()).unwrap();
             data.as_ptr().copy_to(mapped_memory.add(start_offset), data.len());
-            ctx.engine.device()?.allocator().unmap_memory(self.buffer_memory.unwrap());
+            self.ctx.allocator().unmap_memory(self.buffer_memory.unwrap());
         }
         Ok(())
     }
@@ -83,7 +88,7 @@ impl Buffer {
         self.buffer.as_ref().ok_or(anyhow!("Invalid buffer"))
     }
 
-    pub fn create(&mut self, ctx: &CtxEngine) -> Result<(), Error> {
+    pub fn create(&mut self) -> Result<(), Error> {
         let buffer_info = vk::BufferCreateInfo::builder()
             .size(self.size as u64)
             .usage(self.create_infos.usage)
@@ -105,16 +110,19 @@ impl Buffer {
             }
         }
 
-        let (buffer, buffer_memory) = unsafe { ctx.engine.device()?.allocator().create_buffer(buffer_info, &options) }.unwrap();
+        let (buffer, buffer_memory) = unsafe { self.ctx.allocator().create_buffer(buffer_info, &options) }.unwrap();
+
+        println!("create : {:?}", buffer_memory);
 
         self.buffer = Some(buffer);
         self.buffer_memory = Some(buffer_memory);
         Ok(())
     }
 
-    pub fn destroy(&mut self, ctx: &CtxEngine) -> Result<(), Error> {
-        unsafe { ctx.engine.device()?.allocator().destroy_buffer(self.buffer.take().expect("Buffer have already been destroyed"), self.buffer_memory.take().expect("Buffer memory have already been destroyed")) }
-        Ok(())
+    fn destroy(&self) {
+        println!("Destroy ! : {:?}", self.buffer_memory.unwrap());
+
+        unsafe { self.ctx.allocator().destroy_buffer(self.buffer.unwrap(), self.buffer_memory.unwrap()) }
     }
 }
 
@@ -128,11 +136,10 @@ impl Deref for Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        if self.buffer.is_some() {
-            panic!("Buffer have not been destroyed using Buffer::destroy()");
-        }
-        if self.buffer_memory.is_some() {
-            panic!("Buffer memory have not been destroyed using Buffer::destroy()");
-        }
+
+        //@TODO REMOVE THIS
+        unsafe { self.ctx.device().device_wait_idle().unwrap(); }
+
+        self.destroy();
     }
 }

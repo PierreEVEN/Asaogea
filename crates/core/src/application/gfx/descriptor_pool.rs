@@ -1,13 +1,17 @@
+use std::ops::Deref;
+use crate::application::gfx::device::DeviceSharedData;
+use crate::application::window::CtxAppWindow;
 use anyhow::{anyhow, Error};
+use std::sync::RwLock;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
-use crate::application::window::CtxAppWindow;
 
 const MAX_DESC_PER_TYPE: u32 = 1024u32;
 const MAX_DESC_PER_POOL: u32 = 1024u32;
 
 pub struct DescriptorPool {
     pool: Option<vk::DescriptorPool>,
+    device: RwLock<Option<DeviceSharedData>>,
 }
 
 impl DescriptorPool {
@@ -35,37 +39,35 @@ impl DescriptorPool {
         }?;
 
         Ok(Self {
-            pool: Some(pool)
+            pool: Some(pool),
+            device: Default::default(),
         })
+    }
+
+    pub fn init(&self, device_data: DeviceSharedData) {
+        *self.device.write().unwrap() = Some(device_data);
     }
 
     pub fn ptr(&self) -> Result<&vk::DescriptorPool, Error> {
         self.pool.as_ref().ok_or(anyhow!("Descriptor pool is not valid"))
     }
 
-    pub fn allocate(&self, ctx: &CtxAppWindow, layout: vk::DescriptorSetLayout) -> Result<vk::DescriptorSet, Error> {
+    pub fn allocate(&self, layout: vk::DescriptorSetLayout) -> Result<vk::DescriptorSet, Error> {
         let descriptor_info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(self.pool.unwrap())
             .set_layouts(&[layout])
             .build();
-        Ok(unsafe { ctx.engine().device()?.ptr().allocate_descriptor_sets(&descriptor_info)?[0] })
+        Ok(unsafe { self.device.read().unwrap().as_ref().unwrap().device().allocate_descriptor_sets(&descriptor_info)?[0] })
     }
 
-    pub fn free(&self, ctx: &CtxAppWindow, set: vk::DescriptorSet) -> Result<(), Error> {
-        unsafe { ctx.engine().device()?.ptr().free_descriptor_sets(self.pool.unwrap(), &[set]) }?;
-        Ok(())
-    }
-    
-    pub fn destroy(&mut self, ctx: &vulkanalia::Device) -> Result<(), Error> {
-        unsafe { ctx.destroy_descriptor_pool(self.pool.take().unwrap(), None); }
+    pub fn free(&self, set: vk::DescriptorSet) -> Result<(), Error> {
+        unsafe { self.device.read().unwrap().as_ref().unwrap().device().free_descriptor_sets(self.pool.unwrap(), &[set]) }?;
         Ok(())
     }
 }
 
 impl Drop for DescriptorPool {
     fn drop(&mut self) {
-        if self.pool.is_some() {
-            panic!("Descriptor pool have not been destroyed !");
-        }
+        unsafe { self.device.read().unwrap().as_ref().unwrap().device().destroy_descriptor_pool(self.pool.unwrap(), None); }
     }
 }
