@@ -4,18 +4,17 @@ use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
 use crate::application::gfx::resources::mesh::{DynamicMesh, IndexBufferType, MeshCreateInfos};
 use crate::application::gfx::resources::pipeline::AlphaMode;
 use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
+use crate::application::gfx::resources::sampler::Sampler;
 use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
 use crate::application::window::CtxAppWindow;
 use anyhow::Error;
 use imgui::sys::{igCreateContext, igEndFrame, igGetDrawData, igGetIO, igGetMainViewport, igGetStyle, igNewFrame, igRender, igShowDemoWindow, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImVec2, ImVec4};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::ffi::c_char;
-use std::ops::Deref;
 use std::ptr::null_mut;
 use std::slice;
 use vulkanalia::vk;
 use vulkanalia::vk::{CommandBuffer, DeviceV1_0, ImageType};
-use crate::application::gfx::resources::sampler::Sampler;
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -58,12 +57,12 @@ float4 main(VsToFs input) : SV_TARGET {
 
 pub struct ImGui {
     _compiler: HlslCompiler,
-    mesh: Option<DynamicMesh>,
+    mesh: DynamicMesh,
     render_pass: RenderPass,
-    pipeline: Option<Pipeline>,
-    descriptor_sets: Option<DescriptorSets>,
-    font_texture: Option<Image>,
-    sampler: Option<Sampler>,
+    pipeline: Pipeline,
+    descriptor_sets: DescriptorSets,
+    font_texture: Image,
+    sampler: Sampler,
 }
 
 pub struct ImGuiPushConstants {
@@ -124,16 +123,16 @@ impl ImGui {
                                             entry_point: "main".to_string(),
                                         })?;
 
-        let render_pass = RenderPass::new(RenderPassCreateInfos {
+        let render_pass = RenderPass::new(ctx.engine().device()?.shared_data(), RenderPassCreateInfos {
             color_attachments: vec![RenderPassAttachment {
                 clear_value: None,
                 image_format: vk::Format::B8G8R8A8_SRGB,
             }],
             depth_attachment: None,
             is_present_pass: false,
-        }, device.ptr())?;
+        })?;
 
-        let pipeline = Pipeline::new(device.ptr(), &render_pass, vec![vertex, fragment], &PipelineConfig {
+        let pipeline = Pipeline::new(ctx.engine().device()?.shared_data(), &render_pass, vec![vertex, fragment], &PipelineConfig {
             culling: vk::CullModeFlags::NONE,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
@@ -207,22 +206,22 @@ impl ImGui {
 
         //unsafe { (&mut *io.Fonts).TexID = font_texture.__static_view_handle() as ImTextureID; }
 
-        let mut desc_set = DescriptorSets::new(ctx.engine().device()?.shared_data(), pipeline.descriptor_set_layout()?)?;
+        let mut desc_set = DescriptorSets::new(ctx.engine().device()?.shared_data(), pipeline.descriptor_set_layout())?;
 
-        let sampler = Sampler::new(ctx)?;
+        let sampler = Sampler::new(ctx.engine().device()?.shared_data())?;
 
         desc_set.update(vec![
             (ShaderInstanceBinding::SampledImage(*font_texture.view()?, *font_texture.layout()), 0),
-            (ShaderInstanceBinding::Sampler(*sampler.ptr()?), 1),
+            (ShaderInstanceBinding::Sampler(*sampler.ptr()), 1),
         ])?;
         Ok(Self {
             _compiler: compiler,
-            mesh: Some(mesh),
+            mesh,
             render_pass,
-            pipeline: Some(pipeline),
-            descriptor_sets: Some(desc_set),
-            font_texture: Some(font_texture),
-            sampler: Some(sampler),
+            pipeline,
+            descriptor_sets: desc_set,
+            font_texture,
+            sampler,
         })
     }
 
@@ -265,13 +264,13 @@ impl ImGui {
             let mut vertex_start = 0;
             let mut index_start = 0;
 
-            self.mesh.as_mut().unwrap().resize(ctx.ctx_engine(), draw_data.TotalVtxCount as usize, draw_data.TotalIdxCount as usize)?;
+            self.mesh.resize(draw_data.TotalVtxCount as usize, draw_data.TotalIdxCount as usize)?;
 
             for n in 0..draw_data.CmdListsCount
             {
                 let cmd_list = &**draw_data.CmdLists.offset(n as isize);
 
-                self.mesh.as_mut().unwrap().set_data(vertex_start,
+                self.mesh.set_data(vertex_start,
                                                      slice::from_raw_parts(
                                                          cmd_list.VtxBuffer.Data as *const u8,
                                                          cmd_list.VtxBuffer.Size as usize * size_of::<ImDrawVert>(),
@@ -309,7 +308,7 @@ impl ImGui {
         };
 
         unsafe {
-            device.ptr().cmd_push_constants(*command_buffer, *self.pipeline.as_ref().unwrap().ptr_pipeline_layout()?, vk::ShaderStageFlags::VERTEX, 0,
+            device.ptr().cmd_push_constants(*command_buffer, *self.pipeline.ptr_pipeline_layout(), vk::ShaderStageFlags::VERTEX, 0,
                                             slice::from_raw_parts(&push_constants as *const ImGuiPushConstants as *const u8, size_of::<ImGuiPushConstants>()),
             );
         }
@@ -371,7 +370,7 @@ impl ImGui {
                                 device.ptr().cmd_bind_pipeline(
                                     *command_buffer,
                                     vk::PipelineBindPoint::GRAPHICS,
-                                    *self.pipeline.as_ref().unwrap().ptr_pipeline()?,
+                                    *self.pipeline.ptr_pipeline(),
                                 );
                             }
 
@@ -379,9 +378,9 @@ impl ImGui {
                                 device.ptr().cmd_bind_descriptor_sets(
                                     *command_buffer,
                                     vk::PipelineBindPoint::GRAPHICS,
-                                    *self.pipeline.as_ref().unwrap().ptr_pipeline_layout()?,
+                                    *self.pipeline.ptr_pipeline_layout(),
                                     0,
-                                    &[*self.descriptor_sets.as_ref().unwrap().ptr()?],
+                                    &[*self.descriptor_sets.ptr()?],
                                     &[],
                                 );
                             }
@@ -390,13 +389,13 @@ impl ImGui {
                             unsafe {
                                 device.ptr().cmd_bind_index_buffer(
                                     *command_buffer,
-                                    *self.mesh.as_ref().unwrap().index_buffer()?.ptr()?,
+                                    *self.mesh.index_buffer()?.ptr()?,
                                     0 as vk::DeviceSize,
                                     vk::IndexType::UINT16);
                                 device.ptr().cmd_bind_vertex_buffers(
                                     *command_buffer,
                                     0,
-                                    &[*self.mesh.as_ref().unwrap().vertex_buffer()?.ptr()?],
+                                    &[*self.mesh.vertex_buffer()?.ptr()?],
                                     &[0]);
                                 device.ptr().cmd_draw_indexed(*command_buffer, pcmd.ElemCount, 1, pcmd.IdxOffset + global_idx_offset, (pcmd.VtxOffset + global_vtx_offset) as i32, 0);
                             }
@@ -408,30 +407,5 @@ impl ImGui {
             global_vtx_offset += cmd.VtxBuffer.Size as u32;
         }
         Ok(())
-    }
-
-    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
-        if let Some(mesh) = &mut self.mesh {
-            mesh.destroy(ctx)?;
-        }
-        if let Some(pipeline) = &mut self.pipeline {
-            pipeline.destroy(ctx)?;
-        }
-        if let Some(sampler) = &mut self.sampler {
-            sampler.destroy(ctx)?;
-        }
-        self.sampler = None;
-        self.font_texture = None;
-        self.render_pass.destroy(ctx)?;
-        self.mesh = None;
-        Ok(())
-    }
-}
-
-impl Drop for ImGui {
-    fn drop(&mut self) {
-        if self.mesh.is_some() || self.font_texture.is_some() || self.sampler.is_some() {
-            panic!("Imgui have not been destroyed using Imgui::destroy()");
-        }
     }
 }

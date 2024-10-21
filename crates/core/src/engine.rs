@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, RwLockReadGuard, Weak};
 use anyhow::{anyhow, Error};
 use tracing::{error, warn};
 use vulkanalia::vk;
@@ -14,23 +14,34 @@ use crate::options::WindowOptions;
 use crate::application::window::{AppWindow, CtxAppWindow};
 
 pub struct Engine {
-    windows: HashMap<WindowId, RwSLock<AppWindow>>,
-    gfx_instance: Option<RwSLock<Instance>>,
-    gfx_device: Option<RwSLock<Device>>,
-    default_window_settings: WindowOptions
+    data: Arc<EngineData>,
+    default_window_settings: WindowOptions,
 }
 
-pub struct CtxEngine<'a> {
-    pub engine: &'a Engine,
+pub struct EngineCtx(Weak<EngineData>);
+impl EngineCtx {
+    pub fn get(&self) -> Arc<EngineData> {
+        self.0.upgrade().unwrap()
+    }
+}
+
+pub struct EngineData {
+    windows: HashMap<WindowId, AppWindow>,
+    gfx_instance: Option<Instance>,
 }
 
 impl Engine {
     pub fn new(default_window_settings: WindowOptions) -> Result<Self, Error> {
+        let mut config = GfxConfig {
+            validation_layers: true,
+            required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
+        };
         Ok(Self {
-            windows: Default::default(),
-            gfx_instance: None,
-            gfx_device: None,
-            default_window_settings
+            data: Arc::new(EngineData {
+                windows: Default::default(),
+                gfx_instance: Some(Instance::new(&mut config)?),
+            }),
+            default_window_settings,
         })
     }
 
@@ -44,62 +55,26 @@ impl Engine {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
 
-        let mut window = AppWindow::new(event_loop, options)?;
+        let mut window = AppWindow::new(self.ctx(), event_loop, options)?;
         let id = window.id()?;
 
-        let mut config = GfxConfig {
-            validation_layers: true,
-            required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
-        };
-
         let engine = self.ctx();
         let ctx_window = CtxAppWindow::new(&engine, &window);
-        if self.gfx_instance.is_none() {
-            self.gfx_instance = Some(RwSLock::new(
-                Instance::new(&ctx_window, &mut config)?));
-        }
-        window.init(&self.ctx())?;
-
-        let engine = self.ctx();
-        let ctx_window = CtxAppWindow::new(&engine, &window);
-        if self.gfx_device.is_none() {
-            self.gfx_device = Some(RwSLock::new(Device::new(&ctx_window, &GfxConfig {
+        if self.data.gfx_device.is_none() {
+            self.data.gfx_device = Some(RwSLock::new(Device::new(&ctx_window, &GfxConfig {
                 validation_layers: true,
                 required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
             })?));
         }
-
-        let engine = self.ctx();
-        let ctx_window = CtxAppWindow::new(&engine, &window);
-        window.surface()?.write()?.create_or_recreate_swapchain(&ctx_window)?;
+        window.init_swapchain(self.gfx_device.as_ref().unwrap().read().unwrap().shared_data())?;
 
         self.windows.insert(id, RwSLock::new(window));
 
         Ok(())
     }
 
-    pub fn device(&self) -> Result<RwLockReadGuard<Device>, Error> {
-        self.gfx_device.as_ref()
-            .ok_or(anyhow!("Device is not valid. Please create a window first"))?
-            .read()
-    }
-
-    pub fn instance(&self) -> Result<RwLockReadGuard<Instance>, Error> {
-        self.gfx_instance.as_ref()
-            .ok_or(anyhow!("Instance is not valid. Please create a window first"))?
-            .read()
-    }
-
-    pub fn instance_mut(&self) -> Result<RwLockWriteGuard<Instance>, Error> {
-        self.gfx_instance.as_ref()
-            .ok_or(anyhow!("Instance is not valid. Please create a window first"))?
-            .write()
-    }
-
-    pub fn ctx(&self) -> CtxEngine {
-        CtxEngine {
-            engine: self
-        }
+    pub fn ctx(&self) -> EngineCtx {
+        EngineCtx(Arc::downgrade(&self.data))
     }
 }
 
@@ -130,21 +105,12 @@ impl ApplicationHandler for Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        for window in self.windows.values() {
-            if let Err(err) = window.write().unwrap().destroy(&CtxEngine { engine: self }) {
-                panic!("Failed to destroy window : {}", err);
-            }
-        }
         self.windows.clear();
         if let Some(device) = self.gfx_device.take() {
             if let Err(err) = device.write().unwrap().destroy() {
                 panic!("Failed to destroy device : {}", err);
             };
         }
-        if let Some(instance) = self.gfx_instance.take() {
-            if let Err(err) = instance.write().unwrap().destroy() {
-                panic!("Failed to destroy instance : {}", err);
-            }
-        }
+        self.gfx_instance = None;
     }
 }

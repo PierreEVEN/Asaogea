@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Error};
 use vulkanalia::{vk, Device};
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
-use crate::application::window::{CtxAppWindow};
+use crate::application::gfx::device::DeviceSharedData;
 
 #[derive(Clone)]
 pub struct RenderPassAttachment {
@@ -17,12 +17,13 @@ pub struct RenderPassCreateInfos {
 }
 
 pub struct RenderPass {
-    render_pass: Option<vk::RenderPass>,
-    config: RenderPassCreateInfos
+    render_pass: vk::RenderPass,
+    config: RenderPassCreateInfos,
+    ctx: DeviceSharedData
 }
 
 impl RenderPass {
-    pub fn new(config: RenderPassCreateInfos, device: &Device) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceSharedData, config: RenderPassCreateInfos) -> Result<Self, Error> {
 
         let mut attachment_descriptions = Vec::<vk::AttachmentDescription>::new();
         let mut color_attachment_references = Vec::<vk::AttachmentReference>::new();
@@ -120,35 +121,26 @@ impl RenderPass {
             .dependencies(dependencies.as_slice())
             .build();
 
-        let render_pass = unsafe { device.create_render_pass(&render_pass_infos, None) }?;
+        let render_pass = unsafe { ctx.upgrade().device().create_render_pass(&render_pass_infos, None) }?;
 
         Ok(Self {
-            render_pass: Some(render_pass),
+            render_pass,
             config,
+            ctx
         })
     }
 
-    pub fn ptr(&self) -> Result<&vk::RenderPass, Error> {
-        self.render_pass.as_ref().ok_or(anyhow!("Render pass have been destroyed"))
+    pub fn ptr(&self) -> &vk::RenderPass {
+        &self.render_pass
     }
 
     pub fn config(&self) -> &RenderPassCreateInfos {
         &self.config
     }
-    
-    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
-        if let Some(render_pass) = &mut self.render_pass {
-            unsafe { ctx.engine().device()?.ptr().destroy_render_pass(*render_pass, None); }
-        }
-        self.render_pass = None;
-        Ok(())
-    }
 }
 
 impl Drop for RenderPass {
     fn drop(&mut self) {
-        if self.render_pass.is_some() {
-            panic!("Render pass have not been destroyed using RenderPass::destroy()")
-        }
+        unsafe { self.ctx.upgrade().device().destroy_render_pass(self.render_pass, None); }
     }
 }

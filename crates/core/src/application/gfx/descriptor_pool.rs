@@ -57,17 +57,17 @@ impl DescriptorPool {
             .descriptor_pool(self.pool.unwrap())
             .set_layouts(&[layout])
             .build();
-        Ok(unsafe { self.device.read().unwrap().as_ref().unwrap().device().allocate_descriptor_sets(&descriptor_info)?[0] })
+        Ok(unsafe { self.device.read().unwrap().as_ref().unwrap().upgrade().device().allocate_descriptor_sets(&descriptor_info)?[0] })
     }
 
     pub fn free(&self, set: vk::DescriptorSet) -> Result<(), Error> {
-        unsafe { self.device.read().unwrap().as_ref().unwrap().device().free_descriptor_sets(self.pool.unwrap(), &[set]) }?;
+        unsafe { self.device.read().unwrap().as_ref().unwrap().upgrade().device().free_descriptor_sets(self.pool.unwrap(), &[set]) }?;
         Ok(())
     }
 }
 
 impl Drop for DescriptorPool {
     fn drop(&mut self) {
-        unsafe { self.device.read().unwrap().as_ref().unwrap().device().destroy_descriptor_pool(self.pool.unwrap(), None); }
+        unsafe { self.device.read().unwrap().as_ref().unwrap().upgrade().device().destroy_descriptor_pool(self.pool.unwrap(), None); }
     }
 }

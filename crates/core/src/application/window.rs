@@ -1,3 +1,4 @@
+use std::sync::Weak;
 use std::time::Instant;
 use anyhow::{anyhow, Error};
 use tracing::{error};
@@ -5,13 +6,17 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 use types::rwslock::RwSLock;
+use crate::application::gfx::device::DeviceSharedData;
+use crate::application::gfx::instance::Instance;
 use crate::application::gfx::surface::Surface;
+use crate::application::gfx::swapchain::Swapchain;
 use crate::engine::{CtxEngine, Engine};
 use crate::options::{WindowOptions};
 
 pub struct AppWindow {
     window: Option<Window>,
-    surface: Option<RwSLock<Surface>>,
+    surface: Option<Surface>,
+    swapchain: Option<RwSLock<Swapchain>>,
     minimized: bool,
     pub mouse_x: f64,
     pub mouse_y: f64,
@@ -44,15 +49,16 @@ impl<'a> CtxAppWindow<'a> {
 impl AppWindow {}
 
 impl AppWindow {
-    pub fn new(event_loop: &ActiveEventLoop, options: &WindowOptions) -> Result<Self, Error> {
+    pub fn new( ctx: Weak<vulkanalia::Instance>, event_loop: &ActiveEventLoop, options: &WindowOptions) -> Result<Self, Error> {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
 
         let window = event_loop.create_window(attributes)?;
-
+        let surface = Surface::new(ctx, &window)?;
         Ok(Self {
             window: Some(window),
-            surface: None,
+            surface: Some(surface),
+            swapchain: None,
             minimized: false,
             mouse_x: 0.0,
             mouse_y: 0.0,
@@ -63,12 +69,11 @@ impl AppWindow {
         })
     }
 
-    pub fn init(&mut self, ctx: &CtxEngine) -> Result<(), Error> {
-        let ctx = CtxAppWindow { engine: ctx, window: self };
-        self.surface = Some(RwSLock::new(Surface::new(&ctx)?));
+    pub fn init_swapchain(&mut self, ctx: DeviceSharedData) -> Result<(), Error> {
+        self.swapchain = Some(RwSLock::new(Swapchain::new(ctx)?));
         Ok(())
     }
-
+    
     pub fn id(&self) -> Result<WindowId, Error> {
         Ok(self.ptr()?.id())
     }
@@ -77,7 +82,7 @@ impl AppWindow {
         self.window.as_ref().ok_or(anyhow!("Window have been destroyed"))
     }
 
-    pub fn surface(&self) -> Result<&RwSLock<Surface>, Error> {
+    pub fn surface(&self) -> Result<&Surface, Error> {
         self.surface.as_ref().ok_or(anyhow!("Surface is not valid. Window::init() have not been called or the windows have been destroyed"))
     }
 
@@ -128,7 +133,7 @@ impl AppWindow {
                 self.last_frame_time = Instant::now();
                 let ctx = CtxAppWindow { engine: ctx, window: self };
                 if !self.minimized {
-                    let should_recreate = match self.surface()?.write()?.render(&ctx) {
+                    let should_recreate = match self.swapchain.as_ref().unwrap().write()?.render(&ctx) {
                         Ok(should_recreate) => { should_recreate }
                         Err(err) => {
                             error!("Failed to render frame : {}", err);
@@ -136,7 +141,7 @@ impl AppWindow {
                         }
                     };
                     if should_recreate {
-                        match self.surface()?.write()?.create_or_recreate_swapchain(&ctx) {
+                        match self.swapchain.as_ref().unwrap().write()?.create_or_recreate_swapchain(&ctx, self.surface.as_ref().unwrap()) {
                             Ok(_) => {}
                             Err(err) => {
                                 error!("Failed to recreate swapchain : {}", err);
@@ -151,15 +156,6 @@ impl AppWindow {
             }
             _ => (),
         }
-        Ok(())
-    }
-
-    pub fn destroy(&mut self, ctx: &CtxEngine) -> Result<(), Error> {
-        if let Some(surface) = &self.surface {
-            let ctx = CtxAppWindow { engine: ctx, window: self };
-            surface.write()?.destroy(&ctx)?;
-        }
-        self.surface = None;
         Ok(())
     }
 }

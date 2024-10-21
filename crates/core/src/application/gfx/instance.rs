@@ -1,6 +1,7 @@
 use std::any::TypeId;
 use std::collections::HashSet;
-use std::ffi::{c_char, c_void};
+use std::ffi::{c_void};
+use std::sync::{Arc, Weak};
 use anyhow::{anyhow, Error};
 use tracing::{debug, error, trace, warn};
 use vulkanalia::{vk, Entry};
@@ -10,6 +11,8 @@ use vulkanalia::window as vk_window;
 use crate::application::window::{CtxAppWindow};
 use crate::engine::CtxEngine;
 
+fn test() {}
+
 pub(crate) const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
 
 pub struct GfxConfig {
@@ -18,22 +21,21 @@ pub struct GfxConfig {
 }
 
 pub struct Instance {
-    instance: Option<vulkanalia::Instance>,
+    instance: Option<Arc<vulkanalia::Instance>>,
     _entry: Entry,
-    messenger: vk::DebugUtilsMessengerEXT,
+    messenger: DebugUtilsMessengerEXT,
 }
 
 impl Instance {
-    pub fn new(ctx: &CtxAppWindow, config: &mut GfxConfig) -> Result<Self, Error> {
+    pub fn new(config: &mut GfxConfig) -> Result<Self, Error> {
         let entry = unsafe {
             let loader = LibloadingLoader::new(LIBRARY)?;
             Entry::new(loader).map_err(|b| anyhow::anyhow!("{}", b))?
         };
         // Required extensions
-        let mut extensions = vk_window::get_required_instance_extensions(ctx.window.ptr()?)
-            .iter()
-            .map(|e| e.as_ptr())
-            .collect::<Vec<_>>();
+        let mut extensions = vec![
+            vk::KHR_SURFACE_EXTENSION.name.as_ptr(),
+            vk::KHR_WIN32_SURFACE_EXTENSION.name.as_ptr()];
         if config.validation_layers {
             extensions.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
         }
@@ -89,21 +91,23 @@ impl Instance {
             DebugUtilsMessengerEXT::null()
         };
 
-        let instance = Self { instance: Some(instance), _entry: entry, messenger };
+        let instance = Self { instance: Some(Arc::new(instance)), _entry: entry, messenger };
         Ok(instance)
     }
 
-    pub fn ptr(&self) -> Result<&vulkanalia::Instance, Error> {
-        self.instance.as_ref().ok_or(anyhow!("Instance have been destroyed"))
+    pub fn init_device(&mut self, surface: SurfaceCtx) {
+        
+    }
+    
+    pub fn ptr(&self) -> &vulkanalia::Instance {
+        self.instance.as_ref().unwrap()
     }
 
-    pub fn destroy(&mut self) -> Result<(), Error> {
-        self.instance = None;
-        Ok(())
+    pub fn shared_ptr(&self) -> Weak<vulkanalia::Instance> {
+        Arc::downgrade(self.instance.as_ref().unwrap())
     }
 
     pub fn set_vk_object_name<T: vk::Handle + 'static + Copy>(ctx: &CtxEngine, object: T, handle: u64, name: &str) -> T {
-
         let object_type =
             if TypeId::of::<vk::Instance>() == TypeId::of::<T>() {
                 vk::ObjectType::INSTANCE
@@ -166,7 +170,7 @@ impl Instance {
         let string_name = format!("{}", name);
 
         unsafe {
-            ctx.engine.instance().unwrap().ptr().unwrap().set_debug_utils_object_name_ext(ctx.engine.device().unwrap().ptr().handle(), &
+            ctx.engine.instance().ptr().set_debug_utils_object_name_ext(ctx.engine.device().unwrap().ptr().handle(), &
                 vk::DebugUtilsObjectNameInfoEXT::builder()
                     .object_type(object_type)
                     .object_handle(handle)
@@ -180,9 +184,7 @@ impl Instance {
 
 impl Drop for Instance {
     fn drop(&mut self) {
-        if self.instance.is_some() {
-            panic!("Instance have not been destroyed using Instance::destroy()");
-        }
+        self.instance = None;
     }
 }
 

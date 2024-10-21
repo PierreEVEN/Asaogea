@@ -32,18 +32,18 @@ impl CommandPool {
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(num);
 
-        unsafe { Ok(self.ctx.read().unwrap().as_ref().unwrap().device().allocate_command_buffers(&allocate_info)?) }
+        unsafe { Ok(self.ctx.read().unwrap().as_ref().expect("Command pool have not been initialized").upgrade().device().allocate_command_buffers(&allocate_info)?) }
     }
 
     pub fn free(&self, command_buffers: &Vec<vk::CommandBuffer>) -> Result<(), Error> {
-        unsafe { self.ctx.read().unwrap().as_ref().unwrap().device().free_command_buffers(self.command_pool.expect("Command pool is null"), command_buffers.as_slice()); }
+        unsafe { self.ctx.read().unwrap().as_ref().unwrap().upgrade().device().free_command_buffers(self.command_pool.expect("Command pool is null"), command_buffers.as_slice()); }
         Ok(())
     }
 }
 
 impl Drop for CommandPool {
     fn drop(&mut self) {
-        unsafe { self.ctx.read().unwrap().as_ref().unwrap().device().destroy_command_pool(self.command_pool.take().expect("This command pool is already destroyed"), None); }
+        unsafe { self.ctx.read().unwrap().as_ref().unwrap().upgrade().device().destroy_command_pool(self.command_pool.take().expect("This command pool is already destroyed"), None); }
     }
 }
 
@@ -54,7 +54,7 @@ pub struct CommandBuffer {
 
 impl CommandBuffer {
     pub fn new(ctx: DeviceSharedData) -> Result<Self, Error> {
-        let command_buffer = ctx.command_pool().allocate(1)?;
+        let command_buffer = ctx.upgrade().command_pool().allocate(1)?;
         Ok(Self {
             command_buffer: Some(command_buffer[0]),
             ctx,
@@ -65,12 +65,12 @@ impl CommandBuffer {
         let begin_infos = CommandBufferBeginInfo::builder()
             .flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT)
             .build();
-        unsafe { self.ctx.device().begin_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?, &begin_infos)?; }
+        unsafe { self.ctx.upgrade().device().begin_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?, &begin_infos)?; }
         Ok(())
     }
     
     pub fn end(&self) -> Result<(), Error> {
-        unsafe { self.ctx.device().end_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?)?; }
+        unsafe { self.ctx.upgrade().device().end_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?)?; }
         Ok(())
     }
 
@@ -82,7 +82,7 @@ impl CommandBuffer {
 impl Drop for CommandBuffer {
     fn drop(&mut self) {
         if let Some(command_buffer) = self.command_buffer {
-            self.ctx.command_pool().free( &vec![command_buffer]).unwrap();
+            self.ctx.upgrade().command_pool().free( &vec![command_buffer]).unwrap();
         }
         self.command_buffer = None;
     }

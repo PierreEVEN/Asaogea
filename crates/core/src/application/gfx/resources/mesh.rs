@@ -1,9 +1,7 @@
+use crate::application::gfx::device::DeviceSharedData;
 use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferCreateInfo};
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
-use crate::application::gfx::device::DeviceSharedData;
-use crate::application::window::CtxAppWindow;
-use crate::engine::CtxEngine;
 
 pub struct DynamicMesh {
     vertex_buffer: Option<Buffer>,
@@ -63,7 +61,7 @@ impl DynamicMesh {
         Ok(())
     }
 
-    pub fn resize(&mut self, ctx: &CtxEngine, vertex_count: usize, index_count: usize) -> Result<(), Error> {
+    pub fn resize(&mut self, vertex_count: usize, index_count: usize) -> Result<(), Error> {
         let index_size = self.index_buffer_type_size();
         let vtx = self.vertex_buffer.as_mut().unwrap();
         let idx = self.index_buffer.as_mut().unwrap();
@@ -79,18 +77,11 @@ impl DynamicMesh {
     pub fn index_buffer(&self) -> Result<&Buffer, Error> {
         self.index_buffer.as_ref().ok_or(anyhow!("Index buffer is not valid"))
     }
-
-    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
-        self.vertex_buffer = None;
-        self.index_buffer = None;
-        Ok(())
-    }
 }
 
 impl Drop for DynamicMesh {
     fn drop(&mut self) {
-        if self.index_buffer.is_some() || self.vertex_buffer.is_some() {
-            panic!("DynamicMesh::destroy() have not been called !");
-        }
+        self.vertex_buffer = None;
+        self.index_buffer = None;
     }
 }

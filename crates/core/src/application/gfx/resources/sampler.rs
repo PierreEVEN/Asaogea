@@ -1,39 +1,30 @@
-use anyhow::{anyhow, Error};
+use crate::application::gfx::device::DeviceSharedData;
+use anyhow::Error;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
-use crate::application::window::CtxAppWindow;
 
 pub struct Sampler {
-    sampler: Option<vk::Sampler>,
+    sampler: vk::Sampler,
+    ctx: DeviceSharedData,
 }
 
 impl Sampler {
-    pub fn new(ctx: &CtxAppWindow) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceSharedData) -> Result<Self, Error> {
         let create_infos = vk::SamplerCreateInfo::builder()
             .build();
 
-        let sampler = unsafe { ctx.engine().device()?.ptr().create_sampler(&create_infos, None) }?;
+        let sampler = unsafe { ctx.upgrade().device().create_sampler(&create_infos, None) }?;
 
-        Ok(Self { sampler: Some(sampler) })
+        Ok(Self { sampler, ctx })
     }
 
-    pub fn ptr(&self) -> Result<&vk::Sampler, Error> {
-        self.sampler.as_ref().ok_or(anyhow!("Sampler is not valid"))
-    }
-
-    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error> {
-        if let Some(sampler) = self.sampler {
-            unsafe { ctx.engine().device()?.ptr().destroy_sampler(sampler, None); }
-        }
-        self.sampler = None;
-        Ok(())
+    pub fn ptr(&self) -> &vk::Sampler {
+        &self.sampler
     }
 }
 
 impl Drop for Sampler {
     fn drop(&mut self) {
-        if self.sampler.is_some() {
-            panic!("Sampler::destroy() haven not been called");
-        }
+        unsafe { self.ctx.upgrade().device().destroy_sampler(self.sampler, None); }
     }
 }

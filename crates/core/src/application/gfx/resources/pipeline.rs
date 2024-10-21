@@ -1,14 +1,15 @@
+use crate::application::gfx::device::DeviceSharedData;
 use crate::application::gfx::render_pass::RenderPass;
 use crate::application::gfx::resources::shader_module::ShaderStage;
-use anyhow::{anyhow, Error};
-use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, ShaderStageFlags};
+use anyhow::Error;
 use vulkanalia::vk;
-use crate::application::window::CtxAppWindow;
+use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, ShaderStageFlags};
 
 pub struct Pipeline {
-    pipeline_layout: Option<vk::PipelineLayout>,
-    pipeline: Option<vk::Pipeline>,
-    descriptor_set_layout: Option<vk::DescriptorSetLayout>
+    pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    ctx: DeviceSharedData
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,7 +31,7 @@ pub struct PipelineConfig {
 }
 
 impl Pipeline {
-    pub fn new(device: &vulkanalia::Device, render_pass: &RenderPass, mut stages: Vec<ShaderStage>, config: &PipelineConfig) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceSharedData, render_pass: &RenderPass, mut stages: Vec<ShaderStage>, config: &PipelineConfig) -> Result<Self, Error> {
 
         // Push Constant Ranges
         let vert_push_constant_range = vk::PushConstantRange::builder()
@@ -58,7 +59,7 @@ impl Pipeline {
         let ci_descriptor_set_layout = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(bindings.as_slice())
             .build();
-        let descriptor_set_layout = unsafe {device.create_descriptor_set_layout(&ci_descriptor_set_layout, None)}?;
+        let descriptor_set_layout = unsafe {ctx.upgrade().device().create_descriptor_set_layout(&ci_descriptor_set_layout, None)}?;
 
         let set_layouts = &[descriptor_set_layout];
         let push_constant_ranges = &[vert_push_constant_range, frag_push_constant_range];
@@ -66,7 +67,7 @@ impl Pipeline {
             .set_layouts(set_layouts)
             .push_constant_ranges(push_constant_ranges);
 
-        let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None) }?;
+        let pipeline_layout = unsafe { ctx.upgrade().device().create_pipeline_layout(&layout_info, None) }?;
 
         let mut vertex_attribute_description = Vec::<vk::VertexInputAttributeDescription>::new();
 
@@ -217,54 +218,38 @@ impl Pipeline {
             .color_blend_state(&color_blend_state)
             .dynamic_state(&dynamic_states)
             .layout(pipeline_layout)
-            .render_pass(*render_pass.ptr()?)
+            .render_pass(*render_pass.ptr())
             .subpass(0)
             .build();
 
-        let pipeline = unsafe { device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) }?.0;
-
-        for stage in &mut stages {
-            stage.destroy(device)?;
-        }
-
+        let pipeline = unsafe { ctx.upgrade().device().create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) }?.0;
+        
         Ok(Self {
-            pipeline_layout: Some(pipeline_layout),
-            pipeline: Some(pipeline[0]),
-            descriptor_set_layout: Some(descriptor_set_layout),
+            pipeline_layout,
+            pipeline: pipeline[0],
+            descriptor_set_layout,
+            ctx,
         })
     }
 
-    pub fn ptr_pipeline(&self) -> Result<&vk::Pipeline, Error> {
-        self.pipeline.as_ref().ok_or(anyhow!("pipeline have been destroyed"))
+    pub fn ptr_pipeline(&self) -> &vk::Pipeline {
+        &self.pipeline
     }
 
-    pub fn descriptor_set_layout(&self) -> Result<&vk::DescriptorSetLayout, Error> {
-        self.descriptor_set_layout.as_ref().ok_or(anyhow!("descriptor set layout have been destroyed"))
+    pub fn descriptor_set_layout(&self) -> &vk::DescriptorSetLayout {
+        &self.descriptor_set_layout
     }
 
-    pub fn ptr_pipeline_layout(&self) -> Result<&vk::PipelineLayout, Error> {
-        self.pipeline_layout.as_ref().ok_or(anyhow!("pipeline layout have been destroyed"))
-    }
-    
-    pub fn destroy(&mut self, ctx: &CtxAppWindow) -> Result<(), Error>{
-        let device = ctx.engine().device()?;
-        unsafe { device.ptr().destroy_pipeline_layout(self.pipeline_layout.take().expect("Shader module have already been destroyed"), None); }
-        unsafe { device.ptr().destroy_descriptor_set_layout(self.descriptor_set_layout.take().expect("Shader module have already been destroyed"), None); }
-        unsafe { device.ptr().destroy_pipeline(self.pipeline.take().expect("Shader module have already been destroyed"), None); }
-        Ok(())
+    pub fn ptr_pipeline_layout(&self) -> &vk::PipelineLayout {
+        &self.pipeline_layout
     }
 }
 
 impl Drop for Pipeline {
     fn drop(&mut self) {
-        if self.pipeline_layout.is_some() {
-            panic!("Pipeline layout have not been destroyed using Pipeline::destroy()");
-        }
-        if self.descriptor_set_layout.is_some() {
-            panic!("Descriptor set layout have not been destroyed using Pipeline::destroy()");
-        }
-        if self.pipeline.is_some() {
-            panic!("Pipeline have not been destroyed using Pipeline::destroy()");
-        }
+        let device = self.ctx.upgrade();
+        unsafe { device.device().destroy_pipeline_layout(self.pipeline_layout, None); }
+        unsafe { device.device().destroy_descriptor_set_layout(self.descriptor_set_layout, None); }
+        unsafe { device.device().destroy_pipeline(self.pipeline, None); }
     }
 }

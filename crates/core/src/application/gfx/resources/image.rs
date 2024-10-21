@@ -42,8 +42,7 @@ impl Image {
             .build();
 
         let allocation_options = vulkanalia_vma::AllocationOptions::default();
-        println!("Create image");
-        let (image, allocation) = unsafe { ctx.allocator().create_image(infos, &allocation_options) }?;
+        let (image, allocation) = unsafe { ctx.upgrade().allocator().create_image(infos, &allocation_options) }?;
 
         let image_view_ci = vk::ImageViewCreateInfo::builder()
             .image(image)
@@ -59,7 +58,7 @@ impl Image {
                 .build())
             .build();
 
-        let image_view = unsafe { ctx.device().create_image_view(&image_view_ci, None)? };
+        let image_view = unsafe { ctx.upgrade().device().create_image_view(&image_view_ci, None)? };
 
         Ok(Self {
             image: Some(image),
@@ -82,7 +81,7 @@ impl Image {
         self.set_image_layout(command_buffer.ptr()?, vk::ImageLayout::TRANSFER_DST_OPTIMAL)?;
         // GPU copy command
         unsafe {
-            self.ctx.device().cmd_copy_buffer_to_image(
+            self.ctx.upgrade().device().cmd_copy_buffer_to_image(
                 *command_buffer.ptr()?,
                 *transfer_buffer.ptr()?,
                 self.image.ok_or(anyhow!("invalid image"))?,
@@ -110,13 +109,13 @@ impl Image {
             .build();
 
         let infos = FenceCreateInfo::builder();
-        let fence = unsafe { self.ctx.device().create_fence(&infos, None) }?;
+        let fence = unsafe { self.ctx.upgrade().device().create_fence(&infos, None) }?;
 
-        unsafe { self.ctx.device().queue_submit(self.ctx.queues().transfer, &[submit_info], fence) }?;
+        unsafe { self.ctx.upgrade().device().queue_submit(self.ctx.upgrade().queues().transfer, &[submit_info], fence) }?;
 
-        unsafe { self.ctx.device().wait_for_fences(&[fence], true, u64::MAX)?; }
+        unsafe { self.ctx.upgrade().device().wait_for_fences(&[fence], true, u64::MAX)?; }
 
-        unsafe { self.ctx.device().destroy_fence(fence, None) };
+        unsafe { self.ctx.upgrade().device().destroy_fence(fence, None) };
 
         Ok(())
     }
@@ -159,7 +158,7 @@ impl Image {
         unsafe {
             let memory_barriers: [vk::MemoryBarrier; 0] = [];
             let buffer_memory_barriers: [vk::BufferMemoryBarrier; 0] = [];
-            self.ctx.device().cmd_pipeline_barrier(
+            self.ctx.upgrade().device().cmd_pipeline_barrier(
                 *command_buffer,
                 source_destination_stages.0,
                 source_destination_stages.1,
@@ -186,10 +185,9 @@ impl Image {
 
 impl Drop for Image {
     fn drop(&mut self) {
-        println!("Destroy image");
-        unsafe { self.ctx.allocator().destroy_image(self.image.take().unwrap(), self.allocation.unwrap()) };
+        unsafe { self.ctx.upgrade().allocator().destroy_image(self.image.take().unwrap(), self.allocation.unwrap()) };
 
-        unsafe { self.ctx.device().destroy_image_view(self.view.take().unwrap(), None) };
+        unsafe { self.ctx.upgrade().device().destroy_image_view(self.view.take().unwrap(), None) };
 
     }
 }

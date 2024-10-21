@@ -18,7 +18,7 @@ pub enum ShaderInstanceBinding {
 
 impl DescriptorSets {
     pub fn new(ctx: DeviceSharedData, layout: &DescriptorSetLayout) -> Result<Self, Error> {
-        let desc_set = ctx.descriptor_pool().allocate(*layout)?;
+        let desc_set = ctx.upgrade().descriptor_pool().allocate(*layout)?;
         Ok(Self {
             desc_set: Some(desc_set),
             ctx,
@@ -57,7 +57,7 @@ impl DescriptorSets {
 
         let copies = Vec::<CopyDescriptorSet>::new();
         
-        unsafe { self.ctx.device().update_descriptor_sets(write_desc_set.as_slice(), copies.as_slice()); }
+        unsafe { self.ctx.upgrade().device().update_descriptor_sets(write_desc_set.as_slice(), copies.as_slice()); }
 
         Ok(())
     }
@@ -69,6 +69,6 @@ impl DescriptorSets {
 
 impl Drop for DescriptorSets {
     fn drop(&mut self) {
-        self.ctx.descriptor_pool().free(self.desc_set.take().unwrap()).unwrap();
+        self.ctx.upgrade().descriptor_pool().free(self.desc_set.take().unwrap()).unwrap();
     }
 }

@@ -1,11 +1,14 @@
+use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, RwLockReadGuard, Weak};
 use anyhow::{anyhow, Error};
 use tracing::{info, warn};
 use vulkanalia::{vk};
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0, KhrSurfaceExtension, Queue};
+use types::rwarc::RwArc;
+use types::rwslock::RwSLock;
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
 use crate::application::gfx::instance::{GfxConfig};
@@ -28,7 +31,7 @@ pub struct QueueFamilyIndices {
 impl QueueFamilyIndices {
     fn get(ctx: &CtxAppWindow, physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
         let properties = unsafe {
-            ctx.engine().instance()?.ptr()?.get_physical_device_queue_family_properties(physical_device)
+            ctx.engine().instance().ptr().get_physical_device_queue_family_properties(physical_device)
         };
 
         let graphics = properties
@@ -49,10 +52,10 @@ impl QueueFamilyIndices {
         let mut present = None;
         for (index, _) in properties.iter().enumerate() {
             unsafe {
-                if ctx.engine().instance()?.ptr()?.get_physical_device_surface_support_khr(
+                if ctx.engine().instance().ptr().get_physical_device_surface_support_khr(
                     physical_device,
                     index as u32,
-                    *ctx.window.surface()?.read()?.ptr()?,
+                    *ctx.window.surface()?.ptr(),
                 )? {
                     present = Some(index as u32);
                     break;
@@ -78,14 +81,13 @@ pub struct SwapchainSupport {
     pub present_modes: Vec<vk::PresentModeKHR>,
 }
 impl SwapchainSupport {
-    pub fn get(ctx: &CtxAppWindow, surface: &Surface, physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
-        let surface = *surface.ptr()?;
-        let instance = ctx.engine().instance()?;
+    pub fn get(instance: &vulkanalia::Instance, surface: &Surface, physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
+        let surface = *surface.ptr();
         unsafe {
             Ok(Self {
-                capabilities: instance.ptr()?.get_physical_device_surface_capabilities_khr(physical_device, surface)?,
-                formats: instance.ptr()?.get_physical_device_surface_formats_khr(physical_device, surface)?,
-                present_modes: instance.ptr()?.get_physical_device_surface_present_modes_khr(physical_device, surface)?,
+                capabilities: instance.get_physical_device_surface_capabilities_khr(physical_device, surface)?,
+                formats: instance.get_physical_device_surface_formats_khr(physical_device, surface)?,
+                present_modes: instance.get_physical_device_surface_present_modes_khr(physical_device, surface)?,
             })
         }
     }
@@ -94,8 +96,8 @@ impl SwapchainSupport {
 impl PhysicalDevice {
     pub fn new(ctx: &CtxAppWindow, config: &GfxConfig) -> Result<Self, Error> {
         unsafe {
-            for physical_device in ctx.engine().instance()?.ptr()?.enumerate_physical_devices()? {
-                let properties = ctx.engine().instance()?.ptr()?.get_physical_device_properties(physical_device);
+            for physical_device in ctx.engine().instance().ptr().enumerate_physical_devices()? {
+                let properties = ctx.engine().instance().ptr().get_physical_device_properties(physical_device);
                 match Self::check_physical_device(ctx, physical_device, config) {
                     Ok(queue_family_indices) => {
                         info!("Selected physical device (`{}`).", properties.device_name);
@@ -118,20 +120,20 @@ impl PhysicalDevice {
     }
 
     unsafe fn check_physical_device(ctx: &CtxAppWindow, physical_device: vk::PhysicalDevice, config: &GfxConfig) -> Result<QueueFamilyIndices, Error> {
-        let properties = ctx.engine().instance()?.ptr()?.get_physical_device_properties(physical_device);
+        let properties = ctx.engine().instance().ptr().get_physical_device_properties(physical_device);
         if properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
             return Err(anyhow!("Only discrete GPUs are supported."));
         }
-        let _features = ctx.engine().instance()?.ptr()?.get_physical_device_features(physical_device);
+        let _features = ctx.engine().instance().ptr().get_physical_device_features(physical_device);
 
-        let extensions = ctx.engine().instance()?.ptr()?
+        let extensions = ctx.engine().instance().ptr()
             .enumerate_device_extension_properties(physical_device, None)?
             .iter()
             .map(|e| e.extension_name)
             .collect::<HashSet<_>>();
 
         let queue_family = QueueFamilyIndices::get(ctx, physical_device)?;
-        let swapchain_support = SwapchainSupport::get(ctx, &*ctx.window.surface()?.read()?, physical_device)?;
+        let swapchain_support = SwapchainSupport::get(ctx.engine().instance().ptr(), &*ctx.window.surface()?, physical_device)?;
         if swapchain_support.formats.is_empty() || swapchain_support.present_modes.is_empty() {
             return Err(anyhow!("Insufficient swapchain support."));
         }
@@ -149,7 +151,6 @@ impl PhysicalDevice {
 }
 
 pub struct Device {
-    physical_device: PhysicalDevice,
     shared_data_internal: Arc<DeviceSharedDataInternal>,
 }
 
@@ -162,41 +163,49 @@ pub struct DeviceQueues {
 #[derive(Clone)]
 pub struct DeviceSharedData(Weak<DeviceSharedDataInternal>);
 
-impl Deref for DeviceSharedData {
-    type Target = DeviceSharedDataInternal;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.upgrade().as_ref().unwrap()
-    }
-}
-
-struct DeviceSharedDataInternal {
+pub struct DeviceSharedDataInternal {
     allocator: MaybeUninit<vulkanalia_vma::Allocator>,
     descriptor_pool: MaybeUninit<DescriptorPool>,
     command_pool: MaybeUninit<CommandPool>,
     device: vulkanalia::Device,
     queues: DeviceQueues,
+    instance: Weak<vulkanalia::Instance>,
+    physical_device: PhysicalDevice
 }
 
 impl DeviceSharedData {
+    pub fn upgrade(&self) -> Arc<DeviceSharedDataInternal> {
+        self.0.upgrade().unwrap()
+    }
+}
+
+impl DeviceSharedDataInternal {
     pub fn device(&self) -> &vulkanalia::Device {
         &self.device
     }
 
+    pub fn physical_device(&self) -> &PhysicalDevice {
+        &self.physical_device
+    }
+
     pub fn allocator(&self) -> &vulkanalia_vma::Allocator {
-        unsafe { &self.allocator.assume_init_ref() }
+        unsafe { self.allocator.assume_init_ref() }
     }
 
     pub fn descriptor_pool(&self) -> &DescriptorPool {
-        unsafe { &self.descriptor_pool.assume_init_ref() }
+        unsafe { self.descriptor_pool.assume_init_ref() }
     }
 
     pub fn command_pool(&self) -> &CommandPool {
-        unsafe { &self.command_pool.assume_init_ref() }
+        unsafe { self.command_pool.assume_init_ref() }
     }
 
     pub fn queues(&self) -> &DeviceQueues {
         &self.queues
+    }
+
+    pub fn instance(&self) -> Arc<vulkanalia::Instance> {
+        self.instance.upgrade().unwrap()
     }
 }
 
@@ -227,7 +236,8 @@ impl Device {
             .enabled_layer_names(layers.as_slice())
             .enabled_extension_names(&extensions)
             .enabled_features(&features);
-        let device = unsafe { ctx.engine().instance()?.ptr()?.create_device(physical_device.physical_device, &info, None)? };
+
+        let device = unsafe { ctx.engine().instance().ptr().create_device(physical_device.physical_device, &info, None)? };
 
 
         let graphics_queue = unsafe {
@@ -241,25 +251,24 @@ impl Device {
         };
         let command_pool = CommandPool::new(&device, physical_device.queue_families_indices())?;
 
-        let instance = ctx.engine().instance()?;
-        let infos = vulkanalia_vma::AllocatorOptions::new(instance.ptr()?, &device, *physical_device.ptr());
+        let instance = ctx.engine().instance();
+        let infos = vulkanalia_vma::AllocatorOptions::new(instance.ptr(), &device, *physical_device.ptr());
         let allocator = unsafe { vulkanalia_vma::Allocator::new(&infos) }?;
         let descriptor_pool = DescriptorPool::new(&device)?;
 
         let shared_data = Arc::new(DeviceSharedDataInternal {
+            physical_device,
             allocator: MaybeUninit::new(allocator),
             descriptor_pool: MaybeUninit::new(descriptor_pool),
             command_pool: MaybeUninit::new(command_pool),
             device,
             queues: DeviceQueues { graphic: graphics_queue, present_queue, transfer: transfer_queue },
+            instance: ctx.engine().instance().shared_ptr(),
         });
-        descriptor_pool.init(DeviceSharedData(Arc::downgrade(&shared_data)));
+        shared_data.descriptor_pool().init(DeviceSharedData(Arc::downgrade(&shared_data)));
+        shared_data.command_pool().init(DeviceSharedData(Arc::downgrade(&shared_data)));
 
-        Ok(Self { physical_device, shared_data_internal: shared_data })
-    }
-
-    pub fn physical_device(&self) -> &PhysicalDevice {
-        &self.physical_device
+        Ok(Self { shared_data_internal: shared_data })
     }
 
     pub fn ptr(&self) -> &vulkanalia::Device {
@@ -278,14 +287,6 @@ impl Device {
             self.shared_data_internal.device.destroy_device(None);
         };
         Ok(())
-    }
-}
-
-impl Deref for Device {
-    type Target = PhysicalDevice;
-
-    fn deref(&self) -> &Self::Target {
-        &self.physical_device
     }
 }
 
