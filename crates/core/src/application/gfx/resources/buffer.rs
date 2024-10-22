@@ -166,6 +166,14 @@ impl BufferMemory {
         Self { data, stride, elements }
     }
 
+    pub fn from_slice<T: Sized>(structure: &[T]) -> Self {
+        Self {
+            data: structure.as_ptr() as *const u8,
+            stride: size_of::<T>(),
+            elements: structure.len(),
+        }
+    }
+    
     pub fn from_struct<T: Sized>(structure: &T) -> Self {
         Self {
             data: structure as *const T as *const u8,

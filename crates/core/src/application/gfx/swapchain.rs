@@ -38,6 +38,7 @@ pub struct Swapchain {
     test_app: Option<TestApp>,
 }
 
+#[derive(Clone)]
 pub struct SwapchainCtx(Weak<SwapchainData>);
 impl SwapchainCtx {
     pub fn get(&self) -> Arc<SwapchainData> {

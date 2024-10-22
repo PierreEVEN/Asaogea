@@ -17,4 +17,5 @@ imgui = { version = "0.12.0", features = ["docking"] }
 rand = "0.8.5"
 glam = "0.29.0"
 gltf = "1.4.1"
-base64 = "0.13.1"
+base64 = "0.22.1"
+image = "0.25.4"

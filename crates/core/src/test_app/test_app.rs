@@ -1,10 +1,10 @@
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
 use crate::application::gfx::render_pass::RenderPass;
 use crate::application::gfx::resources::buffer::BufferMemory;
-use crate::application::gfx::resources::descriptor_sets::DescriptorSets;
+use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::mesh::{DynamicMesh, IndexBufferType};
 use crate::application::gfx::resources::pipeline::{AlphaMode, Pipeline, PipelineConfig};
-use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageInfos, ShaderStageInputs};
+use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
 use crate::application::gfx::swapchain::SwapchainCtx;
 use crate::test_app::camera::Camera;
 use anyhow::{anyhow, Error};
@@ -17,8 +17,12 @@ use std::fs::File;
 use std::io::BufReader;
 use std::ops::Sub;
 use std::path::{Path, PathBuf};
+use image::{ColorType, DynamicImage, GenericImageView};
+use image::ImageFormat::{Jpeg, Png};
 use vulkanalia::vk;
 use winit::keyboard::{Key, NamedKey, SmolStr};
+use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
+use crate::application::gfx::resources::sampler::Sampler;
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -51,13 +55,16 @@ float pow_cord(float val) {
     return pow(abs(sin(val * 50)), 10);
 }
 
+[[vk::binding(0)]]   SamplerState sSampler;
+[[vk::binding(1)]]   Texture2D	 sTexture;
+
 float4 main(VsToFs input) : SV_TARGET {
 
     
 
-    float intens = (pow_cord(input.vtxpos.x) + pow_cord(input.vtxpos.y) + pow_cord(input.vtxpos.z)) * 0.4 + 0.1;
+    float intens = ((pow_cord(input.vtxpos.x) + pow_cord(input.vtxpos.y) + pow_cord(input.vtxpos.z)) * 0.4 + 0.1) * 0.01;
     
-    return float4(float3(intens, intens, intens), 1);
+    return sTexture.Sample(sSampler, input.vtxpos.xy) + float4(float3(intens, intens, intens), 1);
 }
 "#;
 
@@ -71,6 +78,8 @@ pub struct TestApp {
     yaw: f32,
     speed: f32,
     last_mouse: DVec2,
+    images: Vec<Image>,
+    sampler: Sampler,
 }
 
 pub struct Pc {
@@ -99,7 +108,10 @@ impl TestApp {
         })?;
         let fragment = ShaderStage::new(ctx.get().device().clone(), &fragment.raw(),
                                         ShaderStageInfos {
-                                            descriptor_bindings: vec![],
+                                            descriptor_bindings: vec![
+                                                ShaderStageBindings { binding: 0, descriptor_type: vk::DescriptorType::SAMPLER },
+                                                ShaderStageBindings { binding: 1, descriptor_type: vk::DescriptorType::SAMPLED_IMAGE },
+                                            ],
                                             push_constant_size: None,
                                             stage_input: vec![],
                                             stage: vk::ShaderStageFlags::FRAGMENT,
@@ -116,14 +128,43 @@ impl TestApp {
             line_width: 1.0,
         })?;
 
-        let descriptor_sets = DescriptorSets::new(ctx.get().device().clone(), pipeline.descriptor_set_layout())?;
+        let mut descriptor_sets = DescriptorSets::new(ctx.get().device().clone(), pipeline.descriptor_set_layout())?;
 
         let mut camera = Camera::default();
         camera.set_position(Vec3::new(0f32, 0f32, 0.5f32));
 
 
         let Gltf { document, blob } = Gltf::open("resources/models/sample/Lantern.glb")?;
-        let buffers = Self::import_buffer_data(&document, Some(PathBuf::from("resources/models/sample/scifihelmet/").as_path()), blob)?;
+        let buffers = Self::import_buffer_data(&document, Some(PathBuf::from("resources/models/sample/").as_path()), blob)?;
+
+        let mut images = vec![];
+
+        for texture in document.textures() {
+            let data = Self::import_image_data(&document, Some(PathBuf::from("resources/models/sample/").as_path()), &buffers, texture.index())?;
+            println!("load : {:?}", data.color());
+            if data.color() == ColorType::Rgb8 { continue; }
+
+            let mut image = Image::new(ctx.get().device().clone(), ImageCreateOptions {
+                image_type: vk::ImageType::_2D,
+                format: if data.color() == ColorType::Rgb8 { vk::Format::R8G8B8_UNORM } else { vk::Format::R8G8B8A8_UNORM },
+                usage: vk::ImageUsageFlags::SAMPLED,
+                width: data.width(),
+                height: data.height(),
+                depth: 1,
+                mips_levels: 1,
+                is_depth: false,
+            })?;
+
+            image.set_data(&BufferMemory::from_slice(data.as_bytes()))?;
+            images.push(image);
+        }
+
+        let sampler = Sampler::new(ctx.get().device().clone())?;
+
+        descriptor_sets.update(vec![
+            (ShaderInstanceBinding::Sampler(*sampler.ptr()), 0),
+            (ShaderInstanceBinding::SampledImage(*images[0].view()?, *images[0].layout()), 1)
+        ])?;
 
 
         let mut dyn_mesh = DynamicMesh::new(size_of::<Vec3>(), ctx.get().device().clone())?;
@@ -163,7 +204,6 @@ impl TestApp {
                         }
                     }
                 }
-
             }
         }
 
@@ -178,6 +218,8 @@ impl TestApp {
             yaw: 0.0,
             speed: 2f32,
             last_mouse: Default::default(),
+            images,
+            sampler,
         })
     }
 
@@ -197,6 +239,83 @@ impl TestApp {
             buffers.push(gltf::buffer::Data(data));
         }
         Ok(buffers)
+    }
+
+    pub fn import_image_data(
+        document: &gltf::Document,
+        base: Option<&Path>,
+        buffer_data: &[gltf::buffer::Data],
+        image_index: usize,
+    ) -> Result<DynamicImage, Error> {
+        let guess_format = |encoded_image: &[u8]| match image::guess_format(encoded_image) {
+            Ok(Png) => Some(Png),
+            Ok(Jpeg) => Some(Jpeg),
+            _ => None,
+        };
+        let result_image;
+        let document_image = document.images().nth(image_index).unwrap();
+        match document_image.source() {
+            gltf::image::Source::Uri { uri, mime_type } if base.is_some() => {
+                match Scheme::parse(uri) {
+                    Scheme::Data(Some(annoying_case), base64) => {
+                        let encoded_image = base64::decode(&base64)?;
+                        let encoded_format = match annoying_case {
+                            "image/png" => Png,
+                            "image/jpeg" => Jpeg,
+                            _ => match guess_format(&encoded_image) {
+                                Some(format) => format,
+                                None => return Err(anyhow!("unknown format")),
+                            },
+                        };
+                        let decoded_image = image::load_from_memory_with_format(
+                            &encoded_image,
+                            encoded_format,
+                        )?;
+                        return Ok(decoded_image);
+                    }
+                    Scheme::Unsupported => return Err(anyhow!("unknown format")),
+                    _ => {}
+                }
+                let encoded_image = Scheme::read(base, uri)?;
+                let encoded_format = match mime_type {
+                    Some("image/png") => Png,
+                    Some("image/jpeg") => Jpeg,
+                    Some(_) => match guess_format(&encoded_image) {
+                        Some(format) => format,
+                        None => return Err(anyhow!("unknown format")),
+                    },
+                    None => match uri.rsplit('.').next() {
+                        Some("png") => Png,
+                        Some("jpg") | Some("jpeg") => Jpeg,
+                        _ => match guess_format(&encoded_image) {
+                            Some(format) => format,
+                            None => return Err(anyhow!("unknown format")),
+                        },
+                    },
+                };
+                let decoded_image = image::load_from_memory_with_format(&encoded_image, encoded_format)?;
+                result_image = decoded_image;
+            }
+            gltf::image::Source::View { view, mime_type } => {
+                let parent_buffer_data = &buffer_data[view.buffer().index()].0;
+                let begin = view.offset();
+                let end = begin + view.length();
+                let encoded_image = &parent_buffer_data[begin..end];
+                let encoded_format = match mime_type {
+                    "image/png" => Png,
+                    "image/jpeg" => Jpeg,
+                    _ => match guess_format(encoded_image) {
+                        Some(format) => format,
+                        None => return Err(anyhow!("unknown format")),
+                    },
+                };
+                let decoded_image =
+                    image::load_from_memory_with_format(encoded_image, encoded_format)?;
+                result_image = decoded_image;
+            }
+            _ => return Err(anyhow!("unknown format")),
+        }
+        Ok(result_image)
     }
 
     pub fn render(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
@@ -223,7 +342,7 @@ impl TestApp {
                 self.speed = 0.1;
             }
         };
-        
+
         if inputs.is_key_pressed(&Key::Character(SmolStr::from("z"))) {
             delta += &Vec3::new(ds as f32 * speed, 0f32, 0f32);
         };
