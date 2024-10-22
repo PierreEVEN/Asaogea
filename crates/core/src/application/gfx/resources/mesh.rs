@@ -1,4 +1,4 @@
-use crate::application::gfx::device::DeviceSharedData;
+use crate::application::gfx::device::DeviceCtx;
 use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferCreateInfo};
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
@@ -21,7 +21,7 @@ pub enum IndexBufferType {
 }
 
 impl DynamicMesh {
-    pub fn new(vertex_structure_size: usize, ctx: DeviceSharedData, create_infos: MeshCreateInfos) -> Result<Self, Error> {
+    pub fn new(vertex_structure_size: usize, ctx: DeviceCtx, create_infos: MeshCreateInfos) -> Result<Self, Error> {
         Ok(Self {
             vertex_buffer: Some(Buffer::new(ctx.clone(), 0, BufferCreateInfo {
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER,

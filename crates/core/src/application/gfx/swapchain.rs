@@ -1,14 +1,15 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 use anyhow::{anyhow, Error};
 use tracing::info;
 use vulkanalia::vk;
 use vulkanalia::vk::{CommandBuffer, CommandBufferResetFlags, DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSwapchainExtension};
 use types::rwarc::RwArc;
-use crate::application::gfx::device::{Device, DeviceSharedData, SwapchainSupport};
+use crate::application::gfx::device::{Device, DeviceCtx, SwapchainSupport};
 use crate::application::gfx::imgui::ImGui;
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::gfx::surface::Surface;
-use crate::application::window::CtxAppWindow;
+use crate::application::window::WindowCtx;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
@@ -31,12 +32,31 @@ pub struct Swapchain {
 
     imgui_temp: Option<ImGui>,
     
-    ctx: DeviceSharedData
+    data: Arc<SwapchainData>
 }
+
+pub struct SwapchainCtx(Weak<SwapchainData>);
+impl SwapchainCtx {
+    pub fn get(&self) -> Arc<SwapchainData> {
+        self.0.upgrade().unwrap()    }
+}
+pub struct SwapchainData {
+    device: DeviceCtx,
+    window: WindowCtx
+}
+impl SwapchainData {
+    pub fn device(&self) -> &DeviceCtx {
+        &self.device
+    }
+    pub fn window(&self) -> &WindowCtx {
+        &self.window
+    }
+}
+
 
 impl Swapchain {
 
-    pub fn new(ctx: DeviceSharedData) -> Result<Self, Error> {
+    pub fn new(device_ctx: DeviceCtx, window_ctx: WindowCtx) -> Result<Self, Error> {
         let mut swapchain = Self {
             swapchain: None,
             swapchain_images: vec![],
@@ -51,40 +71,47 @@ impl Swapchain {
             present_pass: None,
             frame: Default::default(),
             imgui_temp: None,
-            ctx,
+            data: Arc::new(SwapchainData {
+                device: device_ctx,
+                window: window_ctx,
+            }),
         };
 
-        swapchain.create_or_recreate_swapchain();
+        swapchain.create_or_recreate_swapchain()?;
         
         Ok(swapchain)
     }
     
-    pub fn create_or_recreate_swapchain(&mut self, surface: &Surface) -> Result<(), Error> {
-        let device = self.ctx.upgrade().device();
+    pub fn create_or_recreate_swapchain(&mut self) -> Result<(), Error> {
+        let device = self.data.device().get();
+        let device_vulkan = device.device();
 
         if self.swapchain.is_some() {
             self.destroy_swapchain()?;
         }
         
-        let swapchain_support = SwapchainSupport::get(self.ctx.upgrade().instance().as_ref(), surface, *self.ctx.upgrade().physical_device().ptr())?;
+        let swapchain_support = SwapchainSupport::get(
+            device.get().instance(), 
+            self.data.window.get().read().surface().ptr(), 
+            *device.physical_device().ptr())?;
 
         let surface_format = Self::get_swapchain_surface_format(&swapchain_support);
         let present_mode = Self::get_swapchain_present_mode(&swapchain_support);
-        let extent = Self::get_swapchain_extent(ctx, &swapchain_support)?;
+        let extent = Self::get_swapchain_extent(&self.data.window, &swapchain_support)?;
         let image_count = std::cmp::min(swapchain_support.capabilities.min_image_count + 1,
                                         swapchain_support.capabilities.max_image_count);
 
         let mut queue_family_indices = vec![];
-        let image_sharing_mode = if device.queue_families_indices().graphics != device.queue_families_indices().present {
-            queue_family_indices.push(device.queue_families_indices().graphics);
-            queue_family_indices.push(device.queue_families_indices().present);
+        let image_sharing_mode = if device.physical_device().queue_families_indices().graphics != device.physical_device().queue_families_indices().present {
+            queue_family_indices.push(device.physical_device().queue_families_indices().graphics);
+            queue_family_indices.push(device.physical_device().queue_families_indices().present);
             vk::SharingMode::CONCURRENT
         } else {
             vk::SharingMode::EXCLUSIVE
         };
         self.swapchain_extent = extent;
         let info = vk::SwapchainCreateInfoKHR::builder()
-            .surface(*surface.ptr())
+            .surface(*self.data.window.get().read().surface().ptr())
             .min_image_count(image_count)
             .image_format(surface_format.format)
             .image_color_space(surface_format.color_space)
@@ -98,19 +125,19 @@ impl Swapchain {
             .present_mode(present_mode)
             .clipped(true)
             .old_swapchain(vk::SwapchainKHR::null());
-        let swapchain = unsafe { device.ptr().create_swapchain_khr(&info, None) }?;
+        let swapchain = unsafe { device_vulkan.create_swapchain_khr(&info, None) }?;
         self.swapchain = Some(swapchain);
 
         let semaphore_info = vk::SemaphoreCreateInfo::builder();
         let fence_info = vk::FenceCreateInfo::builder()
             .flags(vk::FenceCreateFlags::SIGNALED);
         for _ in 0..MAX_FRAMES_IN_FLIGHT {
-            unsafe { self.image_available_semaphores.push(device.ptr().create_semaphore(&semaphore_info, None)?); }
-            unsafe { self.render_finished_semaphores.push(device.ptr().create_semaphore(&semaphore_info, None)?); }
-            unsafe { self.in_flight_fences.push(device.ptr().create_fence(&fence_info, None)?); }
+            unsafe { self.image_available_semaphores.push(device_vulkan.create_semaphore(&semaphore_info, None)?); }
+            unsafe { self.render_finished_semaphores.push(device_vulkan.create_semaphore(&semaphore_info, None)?); }
+            unsafe { self.in_flight_fences.push(device_vulkan.create_fence(&fence_info, None)?); }
         }
 
-        self.present_pass = Some(RenderPass::new(ctx.engine().device()?.shared_data(),RenderPassCreateInfos {
+        self.present_pass = Some(RenderPass::new(self.data.device.clone(),RenderPassCreateInfos {
             color_attachments: vec![RenderPassAttachment {
                 clear_value: None,
                 image_format: surface_format.format,
@@ -119,9 +146,9 @@ impl Swapchain {
             is_present_pass: true,
         })?);
 
-        self.update_swapchain_images(&*device, &swapchain_support)?;
+        self.update_swapchain_images(&swapchain_support)?;
 
-        self.command_buffer = device.shared_data().upgrade().command_pool().allocate(self.swapchain_images.len() as u32)?;
+        self.command_buffer = device.command_pool().allocate(self.swapchain_images.len() as u32)?;
 
         *self.images_in_flight.write() = self.swapchain_images
             .iter()
@@ -133,16 +160,16 @@ impl Swapchain {
         Ok(())
     }
 
-    pub fn get_swapchain_extent(ctx: &CtxAppWindow, swapchain_support: &SwapchainSupport) -> Result<vk::Extent2D, Error> {
+    pub fn get_swapchain_extent(window_ctx: &WindowCtx, swapchain_support: &SwapchainSupport) -> Result<vk::Extent2D, Error> {
         Ok(if swapchain_support.capabilities.current_extent.width != u32::MAX {
             swapchain_support.capabilities.current_extent
         } else {
             vk::Extent2D::builder()
-                .width(ctx.window.ptr()?.inner_size().width.clamp(
+                .width(window_ctx.get().read().width()?.clamp(
                     swapchain_support.capabilities.min_image_extent.width,
                     swapchain_support.capabilities.max_image_extent.width,
                 ))
-                .height(ctx.window.ptr()?.inner_size().height.clamp(
+                .height(window_ctx.get().read().width()?.clamp(
                     swapchain_support.capabilities.min_image_extent.height,
                     swapchain_support.capabilities.max_image_extent.height,
                 ))
@@ -171,7 +198,7 @@ impl Swapchain {
 
 
     fn destroy_swapchain(&mut self) -> Result<(), Error> {
-        let device = self.ctx.upgrade();
+        let device = self.data.device.get();
 
         unsafe { device.device().device_wait_idle()?; }
 
@@ -197,8 +224,10 @@ impl Swapchain {
         Ok(())
     }
 
-    fn update_swapchain_images(&mut self, device: &Device, swapchain_support: &SwapchainSupport) -> Result<(), Error> {
-        self.swapchain_images = unsafe { device.ptr().get_swapchain_images_khr(self.swapchain.expect("The swapchain have not been initialized yet"))? };
+    fn update_swapchain_images(&mut self, swapchain_support: &SwapchainSupport) -> Result<(), Error> {
+        let device = self.data.device.get();
+        let device_vulkan = device.device();
+        self.swapchain_images = unsafe { device_vulkan.get_swapchain_images_khr(self.swapchain.expect("The swapchain have not been initialized yet"))? };
 
         self.swapchain_image_views = self
             .swapchain_images
@@ -224,7 +253,7 @@ impl Swapchain {
                     .components(components)
                     .subresource_range(subresource_range);
 
-                unsafe { device.ptr().create_image_view(&info, None) }
+                unsafe { device_vulkan.create_image_view(&info, None) }
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -240,22 +269,23 @@ impl Swapchain {
                     .height(self.swapchain_extent.height)
                     .layers(1);
 
-                unsafe { device.ptr().create_framebuffer(&create_info, None) }
+                unsafe { device_vulkan.create_framebuffer(&create_info, None) }
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(())
     }
 
-    pub fn render(&mut self, ctx: &CtxAppWindow) -> Result<bool, Error> {
+    pub fn render(&mut self) -> Result<bool, Error> {
         let frame = self.frame.load(Ordering::SeqCst);
         let swapchain = self.swapchain.ok_or(anyhow!("Swapchain is not valid. Maybe you forget to call Swapchain::create_or_recreate()"))?;
-        let device = ctx.engine().device()?;
+        let device = self.data.device.get();
+        let device_vulkan = device.device();
 
-        unsafe { device.ptr().wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?; }
-        unsafe { device.ptr().reset_fences(&[self.in_flight_fences[frame]])?; }
+        unsafe { device_vulkan.wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?; }
+        unsafe { device_vulkan.reset_fences(&[self.in_flight_fences[frame]])?; }
 
-        let result = unsafe { device.ptr().acquire_next_image_khr(swapchain, u64::MAX, self.image_available_semaphores[frame], vk::Fence::null()) };
+        let result = unsafe { device_vulkan.acquire_next_image_khr(swapchain, u64::MAX, self.image_available_semaphores[frame], vk::Fence::null()) };
 
         let image_index = match result {
             Ok((image_index, _)) => image_index as usize,
@@ -264,7 +294,7 @@ impl Swapchain {
         };
 
         if !self.images_in_flight.read()[image_index].is_null() {
-            unsafe { device.ptr().wait_for_fences(&[self.images_in_flight.read()[image_index]], true, u64::MAX)?; }
+            unsafe { device_vulkan.wait_for_fences(&[self.images_in_flight.read()[image_index]], true, u64::MAX)?; }
         }
 
         self.images_in_flight.write()[image_index] = self.in_flight_fences[frame];
@@ -280,25 +310,25 @@ impl Swapchain {
         };
         let clear_values = &[color_clear_value];
 
-        unsafe { device.ptr().reset_command_buffer(self.command_buffer[image_index], CommandBufferResetFlags::empty())?; }
+        unsafe { device_vulkan.reset_command_buffer(self.command_buffer[image_index], CommandBufferResetFlags::empty())?; }
 
         let inheritance = vk::CommandBufferInheritanceInfo::builder();
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::empty()) // Optional.
             .inheritance_info(&inheritance);
-        unsafe { device.ptr().begin_command_buffer(self.command_buffer[image_index], &info)?; }
+        unsafe { device_vulkan.begin_command_buffer(self.command_buffer[image_index], &info)?; }
 
         let info = vk::RenderPassBeginInfo::builder()
-            .render_pass(*self.present_pass.as_ref().expect("Present pass have not been initialized yet").ptr())
+            .render_pass(*self.present_pass.as_ref().unwrap().ptr())
             .framebuffer(self.framebuffers[image_index])
             .render_area(render_area)
             .clear_values(clear_values);
 
-        unsafe { device.ptr().cmd_begin_render_pass(self.command_buffer[image_index], &info, vk::SubpassContents::INLINE); }
+        unsafe { device_vulkan.cmd_begin_render_pass(self.command_buffer[image_index], &info, vk::SubpassContents::INLINE); }
 
 
         unsafe {
-            device.ptr().cmd_set_viewport(self.command_buffer[image_index], 0, &[vk::Viewport::builder()
+            device_vulkan.cmd_set_viewport(self.command_buffer[image_index], 0, &[vk::Viewport::builder()
                 .x(0.0)
                 .y(self.swapchain_extent.height as _)
                 .width(self.swapchain_extent.width as _)
@@ -311,13 +341,13 @@ impl Swapchain {
 
 
         if self.imgui_temp.is_none() {
-            self.imgui_temp = Some(ImGui::new(ctx)?);
+            self.imgui_temp = Some(ImGui::new(self.ctx())?);
         }
 
-        self.imgui_temp.as_mut().unwrap().render(ctx, &self.command_buffer[image_index])?;
+        self.imgui_temp.as_mut().unwrap().render(&self.command_buffer[image_index])?;
 
-        unsafe { device.ptr().cmd_end_render_pass(self.command_buffer[image_index]); }
-        unsafe { device.ptr().end_command_buffer(self.command_buffer[image_index])?; }
+        unsafe { device_vulkan.cmd_end_render_pass(self.command_buffer[image_index]); }
+        unsafe { device_vulkan.end_command_buffer(self.command_buffer[image_index])?; }
 
         let wait_semaphores = &[self.image_available_semaphores[frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -329,7 +359,7 @@ impl Swapchain {
             .command_buffers(command_buffers)
             .signal_semaphores(signal_semaphores);
 
-        unsafe { device.ptr().queue_submit(device.shared_data().upgrade().queues().graphic, &[submit_info], self.in_flight_fences[frame])?; }
+        unsafe { device_vulkan.queue_submit(device.queues().graphic, &[submit_info], self.in_flight_fences[frame])?; }
 
 
         let swapchains = &[swapchain];
@@ -339,7 +369,7 @@ impl Swapchain {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        let result = unsafe { device.ptr().queue_present_khr(device.shared_data().upgrade().queues().present_queue, &present_info) };
+        let result = unsafe { device_vulkan.queue_present_khr(device.queues().present_queue, &present_info) };
 
         let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
 
@@ -352,16 +382,20 @@ impl Swapchain {
         self.frame.store((frame + 1) % MAX_FRAMES_IN_FLIGHT, Ordering::SeqCst);
         Ok(false)
     }
+    
+    pub fn ctx(&self) -> SwapchainCtx {
+        SwapchainCtx(Arc::downgrade(&self.data))
+    }
 }
 
 impl Drop for Swapchain {
     fn drop(&mut self) {
         self.imgui_temp = None;
 
-        let device = self.ctx.upgrade();
+        let device = self.data.device.get();
 
 
-        unsafe { self.ctx.upgrade().device().device_wait_idle().unwrap(); }
+        unsafe { device.device().device_wait_idle().unwrap(); }
 
         self.present_pass = None;
         self.destroy_swapchain().unwrap();

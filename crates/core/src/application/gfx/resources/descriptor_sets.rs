@@ -4,12 +4,11 @@ use anyhow::{anyhow, Error};
 use vulkanalia::vk;
 use vulkanalia::vk::{CopyDescriptorSet, DescriptorImageInfo, DescriptorSetLayout, DeviceV1_0, HasBuilder};
 use crate::application::gfx::descriptor_pool::DescriptorPool;
-use crate::application::gfx::device::DeviceSharedData;
-use crate::application::window::CtxAppWindow;
+use crate::application::gfx::device::DeviceCtx;
 
 pub struct DescriptorSets {
     desc_set: Option<vk::DescriptorSet>,
-    ctx: DeviceSharedData
+    ctx: DeviceCtx
 }
 pub enum ShaderInstanceBinding {
     Sampler(vk::Sampler),
@@ -17,8 +16,8 @@ pub enum ShaderInstanceBinding {
 }
 
 impl DescriptorSets {
-    pub fn new(ctx: DeviceSharedData, layout: &DescriptorSetLayout) -> Result<Self, Error> {
-        let desc_set = ctx.upgrade().descriptor_pool().allocate(*layout)?;
+    pub fn new(ctx: DeviceCtx, layout: &DescriptorSetLayout) -> Result<Self, Error> {
+        let desc_set = ctx.get().descriptor_pool().allocate(*layout)?;
         Ok(Self {
             desc_set: Some(desc_set),
             ctx,
@@ -57,7 +56,7 @@ impl DescriptorSets {
 
         let copies = Vec::<CopyDescriptorSet>::new();
         
-        unsafe { self.ctx.upgrade().device().update_descriptor_sets(write_desc_set.as_slice(), copies.as_slice()); }
+        unsafe { self.ctx.get().device().update_descriptor_sets(write_desc_set.as_slice(), copies.as_slice()); }
 
         Ok(())
     }
@@ -69,6 +68,6 @@ impl DescriptorSets {
 
 impl Drop for DescriptorSets {
     fn drop(&mut self) {
-        self.ctx.upgrade().descriptor_pool().free(self.desc_set.take().unwrap()).unwrap();
+        self.ctx.get().descriptor_pool().free(self.desc_set.take().unwrap()).unwrap();
     }
 }

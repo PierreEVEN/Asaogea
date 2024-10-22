@@ -7,27 +7,32 @@ use winit::application::ApplicationHandler;
 use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
-use types::rwslock::RwSLock;
-use crate::application::gfx::device::Device;
-use crate::application::gfx::instance::{GfxConfig, Instance};
+use types::rwarc::{RwArc, RwArcReadOnly, RwWeakReadOnly};
+use crate::application::gfx::instance::{GfxConfig, Instance, InstanceCtx};
 use crate::options::WindowOptions;
-use crate::application::window::{AppWindow, CtxAppWindow};
+use crate::application::window::{AppWindow};
 
 pub struct Engine {
-    data: Arc<EngineData>,
+    data: RwArc<EngineData>,
     default_window_settings: WindowOptions,
 }
 
-pub struct EngineCtx(Weak<EngineData>);
+#[derive(Clone)]
+pub struct EngineCtx(RwWeakReadOnly<EngineData>);
 impl EngineCtx {
-    pub fn get(&self) -> Arc<EngineData> {
-        self.0.upgrade().unwrap()
+    pub fn get(&self) -> RwArcReadOnly<EngineData> {
+        self.0.upgrade()
     }
 }
 
 pub struct EngineData {
     windows: HashMap<WindowId, AppWindow>,
-    gfx_instance: Option<Instance>,
+    instance: Option<Instance>,
+}
+impl EngineData {
+    pub fn instance(&self) -> InstanceCtx {
+        self.instance.as_ref().unwrap().ctx()
+    }
 }
 
 impl Engine {
@@ -36,11 +41,15 @@ impl Engine {
             validation_layers: true,
             required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
         };
+        let data = RwArc::new(EngineData
+        {
+            windows: Default::default(),
+            instance: None,
+        });
+        data.write().instance = Some(Instance::new(EngineCtx(RwArc::downgrade_read_only(&data)), &mut config)?);
+
         Ok(Self {
-            data: Arc::new(EngineData {
-                windows: Default::default(),
-                gfx_instance: Some(Instance::new(&mut config)?),
-            }),
+            data,
             default_window_settings,
         })
     }
@@ -54,27 +63,15 @@ impl Engine {
     pub fn create_window(&mut self, event_loop: &ActiveEventLoop, options: &WindowOptions) -> Result<(), Error> {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
-
         let mut window = AppWindow::new(self.ctx(), event_loop, options)?;
-        let id = window.id()?;
-
-        let engine = self.ctx();
-        let ctx_window = CtxAppWindow::new(&engine, &window);
-        if self.data.gfx_device.is_none() {
-            self.data.gfx_device = Some(RwSLock::new(Device::new(&ctx_window, &GfxConfig {
-                validation_layers: true,
-                required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
-            })?));
-        }
-        window.init_swapchain(self.gfx_device.as_ref().unwrap().read().unwrap().shared_data())?;
-
-        self.windows.insert(id, RwSLock::new(window));
-
+        let device = self.data.write().instance.as_mut().unwrap().get_or_create_device(window.ctx());
+        window.init_swapchain(device)?;
+        self.data.write().windows.insert(window.ctx().get().read().id()?, window);
         Ok(())
     }
 
     pub fn ctx(&self) -> EngineCtx {
-        EngineCtx(Arc::downgrade(&self.data))
+        EngineCtx(RwArc::downgrade_read_only(&self.data))
     }
 }
 
@@ -90,11 +87,10 @@ impl ApplicationHandler for Engine {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        match self.windows.get(&id) {
+        match self.data.write().windows.get_mut(&id) {
             None => { warn!("Failed to find corresponding windows with id {:?}", id) }
             Some(window) => {
-                let mut window = window.write().unwrap();
-                match window.window_event(&self.ctx(), event_loop, event) {
+                match window.window_event(event_loop, event) {
                     Ok(_) => {}
                     Err(err) => { error!("Event failed : {}", err) }
                 };
@@ -105,12 +101,7 @@ impl ApplicationHandler for Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        self.windows.clear();
-        if let Some(device) = self.gfx_device.take() {
-            if let Err(err) = device.write().unwrap().destroy() {
-                panic!("Failed to destroy device : {}", err);
-            };
-        }
-        self.gfx_instance = None;
+        self.data.write().windows.clear();
+        self.data.write().instance = None;
     }
 }

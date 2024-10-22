@@ -6,7 +6,6 @@ use crate::application::gfx::resources::pipeline::AlphaMode;
 use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
 use crate::application::gfx::resources::sampler::Sampler;
 use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
-use crate::application::window::CtxAppWindow;
 use anyhow::Error;
 use imgui::sys::{igCreateContext, igEndFrame, igGetDrawData, igGetIO, igGetMainViewport, igGetStyle, igNewFrame, igRender, igShowDemoWindow, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImVec2, ImVec4};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
@@ -15,6 +14,7 @@ use std::ptr::null_mut;
 use std::slice;
 use vulkanalia::vk;
 use vulkanalia::vk::{CommandBuffer, DeviceV1_0, ImageType};
+use crate::application::gfx::swapchain::{SwapchainCtx, SwapchainData};
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -63,6 +63,7 @@ pub struct ImGui {
     descriptor_sets: DescriptorSets,
     font_texture: Image,
     sampler: Sampler,
+    ctx: SwapchainCtx
 }
 
 pub struct ImGuiPushConstants {
@@ -73,15 +74,16 @@ pub struct ImGuiPushConstants {
 }
 
 impl ImGui {
-    pub fn new(ctx: &CtxAppWindow) -> Result<Self, Error> {
+    pub fn new(ctx: SwapchainCtx) -> Result<Self, Error> {
         let mut compiler = HlslCompiler::new()?;
 
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
         let fragment = compiler.compile(&RawShaderDefinition::new("imgui-fragment", "ps_6_0", FRAGMENT.to_string()))?;
 
-        let device = ctx.engine().device()?;
-
-        let vertex = ShaderStage::new(device.ptr(), &vertex.raw(), ShaderStageInfos {
+        let device = ctx.get().device().get();
+        let device_vulkan = device.device();
+        
+        let vertex = ShaderStage::new(ctx.get().device().clone(), &vertex.raw(), ShaderStageInfos {
             descriptor_bindings: vec![],
             push_constant_size: Some(size_of::<ImGuiPushConstants>() as u32),
             stage_input: vec![
@@ -106,7 +108,7 @@ impl ImGui {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: "main".to_string(),
         })?;
-        let fragment = ShaderStage::new(device.ptr(), &fragment.raw(),
+        let fragment = ShaderStage::new(ctx.get().device().clone(), &fragment.raw(),
                                         ShaderStageInfos {
                                             descriptor_bindings: vec![
                                                 ShaderStageBindings {
@@ -123,7 +125,7 @@ impl ImGui {
                                             entry_point: "main".to_string(),
                                         })?;
 
-        let render_pass = RenderPass::new(ctx.engine().device()?.shared_data(), RenderPassCreateInfos {
+        let render_pass = RenderPass::new(ctx.get().device().clone(), RenderPassCreateInfos {
             color_attachments: vec![RenderPassAttachment {
                 clear_value: None,
                 image_format: vk::Format::B8G8R8A8_SRGB,
@@ -132,7 +134,7 @@ impl ImGui {
             is_present_pass: false,
         })?;
 
-        let pipeline = Pipeline::new(ctx.engine().device()?.shared_data(), &render_pass, vec![vertex, fragment], &PipelineConfig {
+        let pipeline = Pipeline::new(ctx.get().device().clone(), &render_pass, vec![vertex, fragment], &PipelineConfig {
             culling: vk::CullModeFlags::NONE,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
@@ -184,7 +186,7 @@ impl ImGui {
         unsafe { ImFontAtlas_GetTexDataAsRGBA32(io.Fonts, &mut pixels, &mut width, &mut height, null_mut()) }
         let data_size = width * height * 4i32;
 
-        let mut font_texture = Image::new(ctx.engine().device()?.shared_data(), ImageCreateOptions {
+        let mut font_texture = Image::new(ctx.get().device().clone(), ImageCreateOptions {
             image_type: ImageType::_2D,
             format: vk::Format::R8G8B8A8_UNORM,
             usage: vk::ImageUsageFlags::SAMPLED,
@@ -199,16 +201,16 @@ impl ImGui {
             font_texture.set_data(Vec::from_raw_parts(pixels, data_size as usize, data_size as usize).as_slice()).unwrap();
         }
 
-        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.engine().device()?.shared_data(), MeshCreateInfos {
+        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.get().device().clone(), MeshCreateInfos {
             index_type: IndexBufferType::Uint16,
         })?;
 
 
         //unsafe { (&mut *io.Fonts).TexID = font_texture.__static_view_handle() as ImTextureID; }
 
-        let mut desc_set = DescriptorSets::new(ctx.engine().device()?.shared_data(), pipeline.descriptor_set_layout())?;
+        let mut desc_set = DescriptorSets::new(ctx.get().device().clone(), pipeline.descriptor_set_layout())?;
 
-        let sampler = Sampler::new(ctx.engine().device()?.shared_data())?;
+        let sampler = Sampler::new(ctx.get().device().clone())?;
 
         desc_set.update(vec![
             (ShaderInstanceBinding::SampledImage(*font_texture.view()?, *font_texture.layout()), 0),
@@ -222,26 +224,30 @@ impl ImGui {
             descriptor_sets: desc_set,
             font_texture,
             sampler,
+            ctx: ctx,
         })
     }
 
-    pub fn render(&mut self, ctx: &CtxAppWindow, command_buffer: &CommandBuffer) -> Result<(), Error> {
+    pub fn render(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
         let io = unsafe { &mut *igGetIO() };
 
-        let device = ctx.engine().device()?;
+        let device = self.ctx.get().device().get();
+        let device_vulkan = device.device();
+        let window = self.ctx.get().window().get();
+        let window_data = window.read();
 
-        io.DisplaySize = ImVec2 { x: ctx.window.width()? as f32, y: ctx.window.height()? as f32 };
+        io.DisplaySize = ImVec2 { x: window_data.width()? as f32, y: window_data.height()? as f32 };
         io.DisplayFramebufferScale = ImVec2 { x: 1.0, y: 1.0 };
-        io.DeltaTime = f32::max(ctx.window.delta_time as f32, 0.0000000001f32);
+        io.DeltaTime = f32::max(window_data.delta_time as f32, 0.0000000001f32);
 
         // Update mouse
-        io.MouseDown[0] = ctx.window.left_pressed;
-        io.MouseDown[1] = ctx.window.right_pressed;
+        io.MouseDown[0] = window_data.left_pressed;
+        io.MouseDown[1] = window_data.right_pressed;
         io.MouseDown[2] = false;
         io.MouseDown[3] = false;
         io.MouseDown[4] = false;
         io.MouseHoveredViewport = 0;
-        io.MousePos = ImVec2 { x: ctx.window.mouse_x as f32, y: ctx.window.mouse_y as f32 };
+        io.MousePos = ImVec2 { x: window_data.mouse_x as f32, y: window_data.mouse_y as f32 };
 
         unsafe { igNewFrame(); }
 
@@ -308,8 +314,8 @@ impl ImGui {
         };
 
         unsafe {
-            device.ptr().cmd_push_constants(*command_buffer, *self.pipeline.ptr_pipeline_layout(), vk::ShaderStageFlags::VERTEX, 0,
-                                            slice::from_raw_parts(&push_constants as *const ImGuiPushConstants as *const u8, size_of::<ImGuiPushConstants>()),
+            device_vulkan.cmd_push_constants(*command_buffer, *self.pipeline.ptr_pipeline_layout(), vk::ShaderStageFlags::VERTEX, 0,
+                                             slice::from_raw_parts(&push_constants as *const ImGuiPushConstants as *const u8, size_of::<ImGuiPushConstants>()),
             );
         }
 
@@ -341,7 +347,7 @@ impl ImGui {
                             w: (pcmd.ClipRect.w - clip_off.y) * clip_scale.y,
                         };
 
-                        if clip_rect.x < ctx.window.width()? as f32 && clip_rect.y < ctx.window.height()? as f32 && clip_rect.z >= 0.0 && clip_rect.w >= 0.0
+                        if clip_rect.x < window_data.width()? as f32 && clip_rect.y < window_data.height()? as f32 && clip_rect.z >= 0.0 && clip_rect.w >= 0.0
                         {
                             // Negative offsets are illegal for vkCmdSetScissor
                             if clip_rect.x < 0.0 {
@@ -353,7 +359,7 @@ impl ImGui {
 
                             // Apply scissor/clipping rectangle
                             unsafe {
-                                device.ptr().cmd_set_scissor(*command_buffer, 0, &[vk::Rect2D {
+                                device_vulkan.cmd_set_scissor(*command_buffer, 0, &[vk::Rect2D {
                                     extent: vk::Extent2D { width: (clip_rect.z - clip_rect.x) as u32, height: (clip_rect.w - clip_rect.y) as u32 },
                                     offset: vk::Offset2D { x: clip_rect.x as i32, y: clip_rect.y as i32 },
                                 }])
@@ -367,7 +373,7 @@ impl ImGui {
                              */
 
                             unsafe {
-                                device.ptr().cmd_bind_pipeline(
+                                device_vulkan.cmd_bind_pipeline(
                                     *command_buffer,
                                     vk::PipelineBindPoint::GRAPHICS,
                                     *self.pipeline.ptr_pipeline(),
@@ -375,7 +381,7 @@ impl ImGui {
                             }
 
                             unsafe {
-                                device.ptr().cmd_bind_descriptor_sets(
+                                device_vulkan.cmd_bind_descriptor_sets(
                                     *command_buffer,
                                     vk::PipelineBindPoint::GRAPHICS,
                                     *self.pipeline.ptr_pipeline_layout(),
@@ -387,17 +393,17 @@ impl ImGui {
 
                             // Draw mesh
                             unsafe {
-                                device.ptr().cmd_bind_index_buffer(
+                                device_vulkan.cmd_bind_index_buffer(
                                     *command_buffer,
                                     *self.mesh.index_buffer()?.ptr()?,
                                     0 as vk::DeviceSize,
                                     vk::IndexType::UINT16);
-                                device.ptr().cmd_bind_vertex_buffers(
+                                device_vulkan.cmd_bind_vertex_buffers(
                                     *command_buffer,
                                     0,
                                     &[*self.mesh.vertex_buffer()?.ptr()?],
                                     &[0]);
-                                device.ptr().cmd_draw_indexed(*command_buffer, pcmd.ElemCount, 1, pcmd.IdxOffset + global_idx_offset, (pcmd.VtxOffset + global_vtx_offset) as i32, 0);
+                                device_vulkan.cmd_draw_indexed(*command_buffer, pcmd.ElemCount, 1, pcmd.IdxOffset + global_idx_offset, (pcmd.VtxOffset + global_vtx_offset) as i32, 0);
                             }
                         }
                     }

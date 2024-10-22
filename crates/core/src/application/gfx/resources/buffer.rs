@@ -1,4 +1,3 @@
-use crate::engine::CtxEngine;
 use anyhow::{anyhow, Error};
 use std::hash::Hash;
 use std::ops::Deref;
@@ -6,7 +5,7 @@ use std::sync::Weak;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia_vma::{Alloc, AllocationCreateFlags};
-use crate::application::gfx::device::DeviceSharedData;
+use crate::application::gfx::device::DeviceCtx;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum BufferAccess
@@ -32,11 +31,11 @@ pub struct Buffer {
     buffer_memory: Option<vulkanalia_vma::Allocation>,
     size: usize,
     create_infos: BufferCreateInfo,
-    ctx: DeviceSharedData
+    ctx: DeviceCtx
 }
 
 impl Buffer {
-    pub fn new(ctx: DeviceSharedData, mut size: usize, create_infos: BufferCreateInfo) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceCtx, mut size: usize, create_infos: BufferCreateInfo) -> Result<Self, Error> {
         if size == 0 {
             size = 1;
         }
@@ -73,9 +72,9 @@ impl Buffer {
             return Err(anyhow!("buffer is to small : size={}, expected={}", self.size, start_offset + data.len()));
         }
         unsafe {
-            let mapped_memory = self.ctx.upgrade().allocator().map_memory(self.buffer_memory.unwrap()).unwrap();
+            let mapped_memory = self.ctx.get().allocator().map_memory(self.buffer_memory.unwrap()).unwrap();
             data.as_ptr().copy_to(mapped_memory.add(start_offset), data.len());
-            self.ctx.upgrade().allocator().unmap_memory(self.buffer_memory.unwrap());
+            self.ctx.get().allocator().unmap_memory(self.buffer_memory.unwrap());
         }
         Ok(())
     }
@@ -110,7 +109,7 @@ impl Buffer {
             }
         }
 
-        let (buffer, buffer_memory) = unsafe { self.ctx.upgrade().allocator().create_buffer(buffer_info, &options) }.unwrap();
+        let (buffer, buffer_memory) = unsafe { self.ctx.get().allocator().create_buffer(buffer_info, &options) }.unwrap();
 
         self.buffer = Some(buffer);
         self.buffer_memory = Some(buffer_memory);
@@ -118,7 +117,7 @@ impl Buffer {
     }
 
     fn destroy(&self) {
-        unsafe { self.ctx.upgrade().allocator().destroy_buffer(self.buffer.unwrap(), self.buffer_memory.unwrap()) }
+        unsafe { self.ctx.get().allocator().destroy_buffer(self.buffer.unwrap(), self.buffer_memory.unwrap()) }
     }
 }
 
@@ -134,7 +133,7 @@ impl Drop for Buffer {
     fn drop(&mut self) {
 
         //@TODO REMOVE THIS
-        unsafe { self.ctx.upgrade().device().device_wait_idle().unwrap(); }
+        unsafe { self.ctx.get().device().device_wait_idle().unwrap(); }
 
         self.destroy();
     }

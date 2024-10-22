@@ -1,4 +1,4 @@
-use crate::application::gfx::device::DeviceSharedData;
+use crate::application::gfx::device::DeviceCtx;
 use crate::application::gfx::render_pass::RenderPass;
 use crate::application::gfx::resources::shader_module::ShaderStage;
 use anyhow::Error;
@@ -9,7 +9,7 @@ pub struct Pipeline {
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     descriptor_set_layout: vk::DescriptorSetLayout,
-    ctx: DeviceSharedData
+    ctx: DeviceCtx
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -31,7 +31,7 @@ pub struct PipelineConfig {
 }
 
 impl Pipeline {
-    pub fn new(ctx: DeviceSharedData, render_pass: &RenderPass, mut stages: Vec<ShaderStage>, config: &PipelineConfig) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceCtx, render_pass: &RenderPass, mut stages: Vec<ShaderStage>, config: &PipelineConfig) -> Result<Self, Error> {
 
         // Push Constant Ranges
         let vert_push_constant_range = vk::PushConstantRange::builder()
@@ -59,7 +59,7 @@ impl Pipeline {
         let ci_descriptor_set_layout = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(bindings.as_slice())
             .build();
-        let descriptor_set_layout = unsafe {ctx.upgrade().device().create_descriptor_set_layout(&ci_descriptor_set_layout, None)}?;
+        let descriptor_set_layout = unsafe {ctx.get().device().create_descriptor_set_layout(&ci_descriptor_set_layout, None)}?;
 
         let set_layouts = &[descriptor_set_layout];
         let push_constant_ranges = &[vert_push_constant_range, frag_push_constant_range];
@@ -67,7 +67,7 @@ impl Pipeline {
             .set_layouts(set_layouts)
             .push_constant_ranges(push_constant_ranges);
 
-        let pipeline_layout = unsafe { ctx.upgrade().device().create_pipeline_layout(&layout_info, None) }?;
+        let pipeline_layout = unsafe { ctx.get().device().create_pipeline_layout(&layout_info, None) }?;
 
         let mut vertex_attribute_description = Vec::<vk::VertexInputAttributeDescription>::new();
 
@@ -222,7 +222,7 @@ impl Pipeline {
             .subpass(0)
             .build();
 
-        let pipeline = unsafe { ctx.upgrade().device().create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) }?.0;
+        let pipeline = unsafe { ctx.get().device().create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) }?.0;
         
         Ok(Self {
             pipeline_layout,
@@ -247,7 +247,7 @@ impl Pipeline {
 
 impl Drop for Pipeline {
     fn drop(&mut self) {
-        let device = self.ctx.upgrade();
+        let device = self.ctx.get();
         unsafe { device.device().destroy_pipeline_layout(self.pipeline_layout, None); }
         unsafe { device.device().destroy_descriptor_set_layout(self.descriptor_set_layout, None); }
         unsafe { device.device().destroy_pipeline(self.pipeline, None); }

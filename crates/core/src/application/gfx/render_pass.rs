@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Error};
 use vulkanalia::{vk, Device};
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
-use crate::application::gfx::device::DeviceSharedData;
+use crate::application::gfx::device::DeviceCtx;
 
 #[derive(Clone)]
 pub struct RenderPassAttachment {
@@ -19,11 +19,11 @@ pub struct RenderPassCreateInfos {
 pub struct RenderPass {
     render_pass: vk::RenderPass,
     config: RenderPassCreateInfos,
-    ctx: DeviceSharedData
+    ctx: DeviceCtx
 }
 
 impl RenderPass {
-    pub fn new(ctx: DeviceSharedData, config: RenderPassCreateInfos) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceCtx, config: RenderPassCreateInfos) -> Result<Self, Error> {
 
         let mut attachment_descriptions = Vec::<vk::AttachmentDescription>::new();
         let mut color_attachment_references = Vec::<vk::AttachmentReference>::new();
@@ -121,7 +121,7 @@ impl RenderPass {
             .dependencies(dependencies.as_slice())
             .build();
 
-        let render_pass = unsafe { ctx.upgrade().device().create_render_pass(&render_pass_infos, None) }?;
+        let render_pass = unsafe { ctx.get().device().create_render_pass(&render_pass_infos, None) }?;
 
         Ok(Self {
             render_pass,
@@ -141,6 +141,6 @@ impl RenderPass {
 
 impl Drop for RenderPass {
     fn drop(&mut self) {
-        unsafe { self.ctx.upgrade().device().destroy_render_pass(self.render_pass, None); }
+        unsafe { self.ctx.get().device().destroy_render_pass(self.render_pass, None); }
     }
 }

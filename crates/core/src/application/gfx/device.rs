@@ -11,9 +11,8 @@ use types::rwarc::RwArc;
 use types::rwslock::RwSLock;
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
-use crate::application::gfx::instance::{GfxConfig};
+use crate::application::gfx::instance::{GfxConfig, InstanceCtx, InstanceData};
 use crate::application::gfx::surface::Surface;
-use crate::application::window::CtxAppWindow;
 
 pub struct PhysicalDevice {
     physical_device: vk::PhysicalDevice,
@@ -29,9 +28,9 @@ pub struct QueueFamilyIndices {
 }
 
 impl QueueFamilyIndices {
-    fn get(ctx: &CtxAppWindow, physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
+    fn get(ctx: &InstanceCtx, surface: &vk::SurfaceKHR,physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
         let properties = unsafe {
-            ctx.engine().instance().ptr().get_physical_device_queue_family_properties(physical_device)
+            ctx.get().instance().get_physical_device_queue_family_properties(physical_device)
         };
 
         let graphics = properties
@@ -52,10 +51,10 @@ impl QueueFamilyIndices {
         let mut present = None;
         for (index, _) in properties.iter().enumerate() {
             unsafe {
-                if ctx.engine().instance().ptr().get_physical_device_surface_support_khr(
+                if ctx.get().instance().get_physical_device_surface_support_khr(
                     physical_device,
                     index as u32,
-                    *ctx.window.surface()?.ptr(),
+                    *surface,
                 )? {
                     present = Some(index as u32);
                     break;
@@ -81,24 +80,23 @@ pub struct SwapchainSupport {
     pub present_modes: Vec<vk::PresentModeKHR>,
 }
 impl SwapchainSupport {
-    pub fn get(instance: &vulkanalia::Instance, surface: &Surface, physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
-        let surface = *surface.ptr();
+    pub fn get(instance: &vulkanalia::Instance, surface: &vk::SurfaceKHR, physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
         unsafe {
             Ok(Self {
-                capabilities: instance.get_physical_device_surface_capabilities_khr(physical_device, surface)?,
-                formats: instance.get_physical_device_surface_formats_khr(physical_device, surface)?,
-                present_modes: instance.get_physical_device_surface_present_modes_khr(physical_device, surface)?,
+                capabilities: instance.get_physical_device_surface_capabilities_khr(physical_device, *surface)?,
+                formats: instance.get_physical_device_surface_formats_khr(physical_device, *surface)?,
+                present_modes: instance.get_physical_device_surface_present_modes_khr(physical_device, *surface)?,
             })
         }
     }
 }
 
 impl PhysicalDevice {
-    pub fn new(ctx: &CtxAppWindow, config: &GfxConfig) -> Result<Self, Error> {
+    pub fn new(ctx: &InstanceCtx, surface: &vk::SurfaceKHR, config: &GfxConfig) -> Result<Self, Error> {
         unsafe {
-            for physical_device in ctx.engine().instance().ptr().enumerate_physical_devices()? {
-                let properties = ctx.engine().instance().ptr().get_physical_device_properties(physical_device);
-                match Self::check_physical_device(ctx, physical_device, config) {
+            for physical_device in ctx.get().instance().enumerate_physical_devices()? {
+                let properties = ctx.get().instance().get_physical_device_properties(physical_device);
+                match Self::check_physical_device(ctx, surface, physical_device, config) {
                     Ok(queue_family_indices) => {
                         info!("Selected physical device (`{}`).", properties.device_name);
                         return Ok(Self {
@@ -119,21 +117,21 @@ impl PhysicalDevice {
         &self.physical_device
     }
 
-    unsafe fn check_physical_device(ctx: &CtxAppWindow, physical_device: vk::PhysicalDevice, config: &GfxConfig) -> Result<QueueFamilyIndices, Error> {
-        let properties = ctx.engine().instance().ptr().get_physical_device_properties(physical_device);
+    unsafe fn check_physical_device(ctx: &InstanceCtx, surface: &vk::SurfaceKHR, physical_device: vk::PhysicalDevice, config: &GfxConfig) -> Result<QueueFamilyIndices, Error> {
+        let properties = ctx.get().instance().get_physical_device_properties(physical_device);
         if properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
             return Err(anyhow!("Only discrete GPUs are supported."));
         }
-        let _features = ctx.engine().instance().ptr().get_physical_device_features(physical_device);
+        let _features = ctx.get().instance().get_physical_device_features(physical_device);
 
-        let extensions = ctx.engine().instance().ptr()
+        let extensions = ctx.get().instance()
             .enumerate_device_extension_properties(physical_device, None)?
             .iter()
             .map(|e| e.extension_name)
             .collect::<HashSet<_>>();
 
-        let queue_family = QueueFamilyIndices::get(ctx, physical_device)?;
-        let swapchain_support = SwapchainSupport::get(ctx.engine().instance().ptr(), &*ctx.window.surface()?, physical_device)?;
+        let queue_family = QueueFamilyIndices::get(ctx, surface, physical_device)?;
+        let swapchain_support = SwapchainSupport::get(ctx.get().instance(), &surface, physical_device)?;
         if swapchain_support.formats.is_empty() || swapchain_support.present_modes.is_empty() {
             return Err(anyhow!("Insufficient swapchain support."));
         }
@@ -151,7 +149,7 @@ impl PhysicalDevice {
 }
 
 pub struct Device {
-    shared_data_internal: Arc<DeviceSharedDataInternal>,
+    data: Arc<DeviceData>,
 }
 
 pub struct DeviceQueues {
@@ -161,25 +159,25 @@ pub struct DeviceQueues {
 }
 
 #[derive(Clone)]
-pub struct DeviceSharedData(Weak<DeviceSharedDataInternal>);
+pub struct DeviceCtx(Weak<DeviceData>);
 
-pub struct DeviceSharedDataInternal {
+pub struct DeviceData {
     allocator: MaybeUninit<vulkanalia_vma::Allocator>,
     descriptor_pool: MaybeUninit<DescriptorPool>,
     command_pool: MaybeUninit<CommandPool>,
     device: vulkanalia::Device,
     queues: DeviceQueues,
-    instance: Weak<vulkanalia::Instance>,
+    instance: InstanceCtx,
     physical_device: PhysicalDevice
 }
 
-impl DeviceSharedData {
-    pub fn upgrade(&self) -> Arc<DeviceSharedDataInternal> {
+impl DeviceCtx {
+    pub fn get(&self) -> Arc<DeviceData> {
         self.0.upgrade().unwrap()
     }
 }
 
-impl DeviceSharedDataInternal {
+impl DeviceData {
     pub fn device(&self) -> &vulkanalia::Device {
         &self.device
     }
@@ -203,15 +201,19 @@ impl DeviceSharedDataInternal {
     pub fn queues(&self) -> &DeviceQueues {
         &self.queues
     }
+}
 
-    pub fn instance(&self) -> Arc<vulkanalia::Instance> {
-        self.instance.upgrade().unwrap()
+impl Deref for DeviceData {
+    type Target = InstanceCtx;
+
+    fn deref(&self) -> &Self::Target {
+        &self.instance
     }
 }
 
 impl Device {
-    pub fn new(ctx: &CtxAppWindow, config: &GfxConfig) -> Result<Self, Error> {
-        let physical_device = PhysicalDevice::new(ctx, config)?;
+    pub fn new(ctx: InstanceCtx, surface: &vk::SurfaceKHR, config: &GfxConfig) -> Result<Self, Error> {
+        let physical_device = PhysicalDevice::new(&ctx, surface, config)?;
 
         let queue_priorities = &[1.0];
         let queue_info = vk::DeviceQueueCreateInfo::builder()
@@ -237,7 +239,7 @@ impl Device {
             .enabled_extension_names(&extensions)
             .enabled_features(&features);
 
-        let device = unsafe { ctx.engine().instance().ptr().create_device(physical_device.physical_device, &info, None)? };
+        let device = unsafe { ctx.get().instance().create_device(physical_device.physical_device, &info, None)? };
 
 
         let graphics_queue = unsafe {
@@ -251,40 +253,40 @@ impl Device {
         };
         let command_pool = CommandPool::new(&device, physical_device.queue_families_indices())?;
 
-        let instance = ctx.engine().instance();
-        let infos = vulkanalia_vma::AllocatorOptions::new(instance.ptr(), &device, *physical_device.ptr());
+        let instance_data = ctx.get();
+        let infos = vulkanalia_vma::AllocatorOptions::new(instance_data.instance(), &device, *physical_device.ptr());
         let allocator = unsafe { vulkanalia_vma::Allocator::new(&infos) }?;
         let descriptor_pool = DescriptorPool::new(&device)?;
 
-        let shared_data = Arc::new(DeviceSharedDataInternal {
+        let shared_data = Arc::new(DeviceData {
             physical_device,
             allocator: MaybeUninit::new(allocator),
             descriptor_pool: MaybeUninit::new(descriptor_pool),
             command_pool: MaybeUninit::new(command_pool),
             device,
             queues: DeviceQueues { graphic: graphics_queue, present_queue, transfer: transfer_queue },
-            instance: ctx.engine().instance().shared_ptr(),
+            instance: ctx.clone(),
         });
-        shared_data.descriptor_pool().init(DeviceSharedData(Arc::downgrade(&shared_data)));
-        shared_data.command_pool().init(DeviceSharedData(Arc::downgrade(&shared_data)));
+        shared_data.descriptor_pool().init(DeviceCtx(Arc::downgrade(&shared_data)));
+        shared_data.command_pool().init(DeviceCtx(Arc::downgrade(&shared_data)));
 
-        Ok(Self { shared_data_internal: shared_data })
+        Ok(Self { data: shared_data })
     }
 
     pub fn ptr(&self) -> &vulkanalia::Device {
-        &self.shared_data_internal.device
+        &self.data.device
     }
 
-    pub fn shared_data(&self) -> DeviceSharedData {
-        DeviceSharedData(Arc::downgrade(&self.shared_data_internal))
+    pub fn ctx(&self) -> DeviceCtx {
+        DeviceCtx(Arc::downgrade(&self.data))
     }
-
+    
     pub fn destroy(&mut self) -> Result<(), Error> {
         unsafe {
-            self.shared_data_internal.command_pool.assume_init_read();
-            self.shared_data_internal.descriptor_pool.assume_init_read();
-            self.shared_data_internal.allocator.assume_init_read();
-            self.shared_data_internal.device.destroy_device(None);
+            self.data.command_pool.assume_init_read();
+            self.data.descriptor_pool.assume_init_read();
+            self.data.allocator.assume_init_read();
+            self.data.device.destroy_device(None);
         };
         Ok(())
     }

@@ -1,6 +1,5 @@
 use std::ops::Deref;
-use crate::application::gfx::device::DeviceSharedData;
-use crate::application::window::CtxAppWindow;
+use crate::application::gfx::device::DeviceCtx;
 use anyhow::{anyhow, Error};
 use std::sync::RwLock;
 use vulkanalia::vk;
@@ -11,7 +10,7 @@ const MAX_DESC_PER_POOL: u32 = 1024u32;
 
 pub struct DescriptorPool {
     pool: Option<vk::DescriptorPool>,
-    device: RwLock<Option<DeviceSharedData>>,
+    device: RwLock<Option<DeviceCtx>>,
 }
 
 impl DescriptorPool {
@@ -44,7 +43,7 @@ impl DescriptorPool {
         })
     }
 
-    pub fn init(&self, device_data: DeviceSharedData) {
+    pub fn init(&self, device_data: DeviceCtx) {
         *self.device.write().unwrap() = Some(device_data);
     }
 
@@ -57,17 +56,17 @@ impl DescriptorPool {
             .descriptor_pool(self.pool.unwrap())
             .set_layouts(&[layout])
             .build();
-        Ok(unsafe { self.device.read().unwrap().as_ref().unwrap().upgrade().device().allocate_descriptor_sets(&descriptor_info)?[0] })
+        Ok(unsafe { self.device.read().unwrap().as_ref().unwrap().get().device().allocate_descriptor_sets(&descriptor_info)?[0] })
     }
 
     pub fn free(&self, set: vk::DescriptorSet) -> Result<(), Error> {
-        unsafe { self.device.read().unwrap().as_ref().unwrap().upgrade().device().free_descriptor_sets(self.pool.unwrap(), &[set]) }?;
+        unsafe { self.device.read().unwrap().as_ref().unwrap().get().device().free_descriptor_sets(self.pool.unwrap(), &[set]) }?;
         Ok(())
     }
 }
 
 impl Drop for DescriptorPool {
     fn drop(&mut self) {
-        unsafe { self.device.read().unwrap().as_ref().unwrap().upgrade().device().destroy_descriptor_pool(self.pool.unwrap(), None); }
+        unsafe { self.device.read().unwrap().as_ref().unwrap().get().device().destroy_descriptor_pool(self.pool.unwrap(), None); }
     }
 }

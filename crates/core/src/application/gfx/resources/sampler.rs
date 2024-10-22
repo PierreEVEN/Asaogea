@@ -1,19 +1,19 @@
-use crate::application::gfx::device::DeviceSharedData;
+use crate::application::gfx::device::DeviceCtx;
 use anyhow::Error;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 
 pub struct Sampler {
     sampler: vk::Sampler,
-    ctx: DeviceSharedData,
+    ctx: DeviceCtx,
 }
 
 impl Sampler {
-    pub fn new(ctx: DeviceSharedData) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceCtx) -> Result<Self, Error> {
         let create_infos = vk::SamplerCreateInfo::builder()
             .build();
 
-        let sampler = unsafe { ctx.upgrade().device().create_sampler(&create_infos, None) }?;
+        let sampler = unsafe { ctx.get().device().create_sampler(&create_infos, None) }?;
 
         Ok(Self { sampler, ctx })
     }
@@ -25,6 +25,6 @@ impl Sampler {
 
 impl Drop for Sampler {
     fn drop(&mut self) {
-        unsafe { self.ctx.upgrade().device().destroy_sampler(self.sampler, None); }
+        unsafe { self.ctx.get().device().destroy_sampler(self.sampler, None); }
     }
 }

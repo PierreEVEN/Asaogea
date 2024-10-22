@@ -1,18 +1,19 @@
 use std::sync::Weak;
-use crate::application::gfx::device::DeviceSharedData;
+use crate::application::gfx::device::DeviceCtx;
 use anyhow::{anyhow, Error};
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrWin32SurfaceExtension, SurfaceKHR, HINSTANCE};
 use vulkanalia::vk;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
+use crate::application::gfx::instance::InstanceCtx;
 
 pub struct Surface {
     surface: SurfaceKHR,
-    instance: Weak<vulkanalia::Instance>
+    instance: InstanceCtx
 }
 
 impl Surface {
-    pub fn new(instance: Weak<vulkanalia::Instance>, window: &Window) -> Result<Self, Error> {
+    pub fn new(ctx: InstanceCtx, window: &Window) -> Result<Self, Error> {
         let surface = match window.window_handle()?.as_raw() {
             RawWindowHandle::Win32(handle) => {
                 let hinstance = match handle.hinstance {
@@ -22,7 +23,7 @@ impl Surface {
                 let info = vk::Win32SurfaceCreateInfoKHR::builder()
                     .hinstance(hinstance.get() as HINSTANCE)
                     .hwnd(handle.hwnd.get() as HINSTANCE);
-                unsafe { instance.upgrade().unwrap().create_win32_surface_khr(&info, None) }?
+                unsafe { ctx.get().instance().create_win32_surface_khr(&info, None) }?
             }
             value => {
                 return Err(anyhow!("Unsupported window platform : {:?}", value));
@@ -31,7 +32,7 @@ impl Surface {
 
         Ok(Self {
             surface,
-            instance,
+            instance: ctx,
         })
     }
 
@@ -42,6 +43,6 @@ impl Surface {
 
 impl Drop for Surface {
     fn drop(&mut self) {
-        unsafe { self.instance.upgrade().unwrap().destroy_surface_khr(self.surface, None); }
+        unsafe { self.instance.get().instance().destroy_surface_khr(self.surface, None); }
     }
 }
