@@ -7,6 +7,7 @@ pub struct DynamicMesh {
     vertex_buffer: Option<Buffer>,
     index_buffer: Option<Buffer>,
     vertex_structure_size: usize,
+    index_count: usize,
     create_infos: MeshCreateInfos,
 }
 
@@ -32,10 +33,18 @@ impl DynamicMesh {
                 access: BufferAccess::GpuOnly,
             })?),
             vertex_structure_size,
+            index_count: 0,
             create_infos,
         })
     }
 
+    pub fn index_buffer_type(&self) -> vk::IndexType {
+        match self.create_infos.index_type {
+            IndexBufferType::Uint16 => { vk::IndexType::UINT16 }
+            IndexBufferType::Uint32 => { vk::IndexType::UINT32 }
+        }
+    }
+    
     fn index_buffer_type_size(&self) -> usize {
         match self.create_infos.index_type {
             IndexBufferType::Uint16 => { 2 }
@@ -56,6 +65,7 @@ impl DynamicMesh {
         if index_start * index_size + index_data.len() > idx.size() {
             idx.resize(index_data.len())?;
         }
+        self.index_count = index_start + index_data.len() / index_size;
         idx.set_data(index_start * index_size, index_data)?;
 
         Ok(())
@@ -76,6 +86,10 @@ impl DynamicMesh {
 
     pub fn index_buffer(&self) -> Result<&Buffer, Error> {
         self.index_buffer.as_ref().ok_or(anyhow!("Index buffer is not valid"))
+    }
+
+    pub fn index_count(&self) -> usize {
+        self.index_count
     }
 }
 

@@ -31,19 +31,18 @@ pub struct PipelineConfig {
 }
 
 impl Pipeline {
-    pub fn new(ctx: DeviceCtx, render_pass: &RenderPass, mut stages: Vec<ShaderStage>, config: &PipelineConfig) -> Result<Self, Error> {
-
-        // Push Constant Ranges
-        let vert_push_constant_range = vk::PushConstantRange::builder()
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
-            .offset(0)
-            .size(64);
-
-        let frag_push_constant_range = vk::PushConstantRange::builder()
-            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-            .offset(64)
-            .size(4);
-
+    pub fn new(ctx: DeviceCtx, render_pass: &RenderPass, stages: Vec<ShaderStage>, config: &PipelineConfig) -> Result<Self, Error> {
+        let mut push_constant_ranges = vec![];
+        for stage in &stages {
+            if let Some(pc) = stage.infos().push_constant_size {
+                push_constant_ranges.push(vk::PushConstantRange::builder()
+                    .stage_flags(stage.infos().stage)
+                    .offset(0)
+                    .size(pc));
+            }
+        }
+        
+        
         // Layout
         let mut bindings = Vec::<vk::DescriptorSetLayoutBinding>::new();
         for stage in &stages {
@@ -62,10 +61,9 @@ impl Pipeline {
         let descriptor_set_layout = unsafe {ctx.get().device().create_descriptor_set_layout(&ci_descriptor_set_layout, None)}?;
 
         let set_layouts = &[descriptor_set_layout];
-        let push_constant_ranges = &[vert_push_constant_range, frag_push_constant_range];
         let layout_info = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(set_layouts)
-            .push_constant_ranges(push_constant_ranges);
+            .push_constant_ranges(push_constant_ranges.as_slice());
 
         let pipeline_layout = unsafe { ctx.get().device().create_pipeline_layout(&layout_info, None) }?;
 

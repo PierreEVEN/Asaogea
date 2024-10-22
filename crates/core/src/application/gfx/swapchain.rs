@@ -3,8 +3,9 @@ use std::sync::{Arc, Weak};
 use anyhow::{anyhow, Error};
 use tracing::info;
 use vulkanalia::vk;
-use vulkanalia::vk::{CommandBuffer, CommandBufferResetFlags, DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSwapchainExtension};
+use vulkanalia::vk::{CommandBufferResetFlags, DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSwapchainExtension};
 use types::rwarc::RwArc;
+use crate::application::gfx::command_buffer::{CommandBuffer, Viewport};
 use crate::application::gfx::device::{Device, DeviceCtx, SwapchainSupport};
 use crate::application::gfx::imgui::ImGui;
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
@@ -32,19 +33,20 @@ pub struct Swapchain {
     frame: AtomicUsize,
 
     imgui_temp: Option<ImGui>,
-    
+
     data: Arc<SwapchainData>,
-    test_app: Option<TestApp>
+    test_app: Option<TestApp>,
 }
 
 pub struct SwapchainCtx(Weak<SwapchainData>);
 impl SwapchainCtx {
     pub fn get(&self) -> Arc<SwapchainData> {
-        self.0.upgrade().unwrap()    }
+        self.0.upgrade().unwrap()
+    }
 }
 pub struct SwapchainData {
     device: DeviceCtx,
-    window: WindowCtx
+    window: WindowCtx,
 }
 impl SwapchainData {
     pub fn device(&self) -> &DeviceCtx {
@@ -57,7 +59,6 @@ impl SwapchainData {
 
 
 impl Swapchain {
-
     pub fn new(device_ctx: DeviceCtx, window_ctx: WindowCtx) -> Result<Self, Error> {
         let mut swapchain = Self {
             swapchain: None,
@@ -81,10 +82,10 @@ impl Swapchain {
         };
 
         swapchain.create_or_recreate_swapchain()?;
-        
+
         Ok(swapchain)
     }
-    
+
     pub fn create_or_recreate_swapchain(&mut self) -> Result<(), Error> {
         let device = self.data.device().get();
         let device_vulkan = device.device();
@@ -92,10 +93,10 @@ impl Swapchain {
         if self.swapchain.is_some() {
             self.destroy_swapchain()?;
         }
-        
+
         let swapchain_support = SwapchainSupport::get(
-            device.get().instance(), 
-            self.data.window.get().read().surface().ptr(), 
+            device.get().instance(),
+            self.data.window.get().read().surface().ptr(),
             *device.physical_device().ptr())?;
 
         let surface_format = Self::get_swapchain_surface_format(&swapchain_support);
@@ -140,7 +141,7 @@ impl Swapchain {
             unsafe { self.in_flight_fences.push(device_vulkan.create_fence(&fence_info, None)?); }
         }
 
-        self.present_pass = Some(RenderPass::new(self.data.device.clone(),RenderPassCreateInfos {
+        self.present_pass = Some(RenderPass::new(self.data.device.clone(), RenderPassCreateInfos {
             color_attachments: vec![RenderPassAttachment {
                 clear_value: None,
                 image_format: surface_format.format,
@@ -151,8 +152,11 @@ impl Swapchain {
 
         self.update_swapchain_images(&swapchain_support)?;
 
-        self.command_buffer = device.command_pool().allocate(self.swapchain_images.len() as u32)?;
+        self.command_buffer = vec![];
 
+        for _ in 0..self.swapchain_images.len() {
+            self.command_buffer.push(CommandBuffer::new(self.data.device.clone())?)
+        }
         *self.images_in_flight.write() = self.swapchain_images
             .iter()
             .map(|_| vk::Fence::null())
@@ -210,7 +214,6 @@ impl Swapchain {
                 .iter()
                 .for_each(|f| device.device().destroy_framebuffer(*f, None));
 
-            device.command_pool().free(&self.command_buffer)?;
             self.command_buffer.clear();
 
             self.swapchain_image_views
@@ -313,13 +316,14 @@ impl Swapchain {
         };
         let clear_values = &[color_clear_value];
 
-        unsafe { device_vulkan.reset_command_buffer(self.command_buffer[image_index], CommandBufferResetFlags::empty())?; }
+        self.command_buffer[image_index].reset()?;
 
         let inheritance = vk::CommandBufferInheritanceInfo::builder();
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::empty()) // Optional.
             .inheritance_info(&inheritance);
-        unsafe { device_vulkan.begin_command_buffer(self.command_buffer[image_index], &info)?; }
+
+        self.command_buffer[image_index].begin()?;
 
         let info = vk::RenderPassBeginInfo::builder()
             .render_pass(*self.present_pass.as_ref().unwrap().ptr())
@@ -327,39 +331,36 @@ impl Swapchain {
             .render_area(render_area)
             .clear_values(clear_values);
 
-        unsafe { device_vulkan.cmd_begin_render_pass(self.command_buffer[image_index], &info, vk::SubpassContents::INLINE); }
+        unsafe { device_vulkan.cmd_begin_render_pass(*self.command_buffer[image_index].ptr()?, &info, vk::SubpassContents::INLINE); }
 
 
-        unsafe {
-            device_vulkan.cmd_set_viewport(self.command_buffer[image_index], 0, &[vk::Viewport::builder()
-                .x(0.0)
-                .y(self.swapchain_extent.height as _)
-                .width(self.swapchain_extent.width as _)
-                .height(-(self.swapchain_extent.height as f32))
-                .min_depth(0.0)
-                .max_depth(1.0)
-                .build()
-            ])
-        };
+        self.command_buffer[image_index].set_viewport(&Viewport {
+            min_x: 0.0,
+            min_y: self.swapchain_extent.height as _,
+            width: self.swapchain_extent.width as _,
+            height: -(self.swapchain_extent.height as f32),
+            min_depth: 0.0,
+            max_depth: 0.0,
+        });
 
 
         if self.imgui_temp.is_none() {
             self.imgui_temp = Some(ImGui::new(self.ctx())?);
         }
-        
+
         if self.test_app.is_none() {
             self.test_app = Some(TestApp::new(self.ctx(), self.present_pass.as_ref().unwrap())?);
         }
         self.test_app.as_mut().unwrap().render(&self.command_buffer[image_index])?;
-        
+
         self.imgui_temp.as_mut().unwrap().render(&self.command_buffer[image_index])?;
 
-        unsafe { device_vulkan.cmd_end_render_pass(self.command_buffer[image_index]); }
-        unsafe { device_vulkan.end_command_buffer(self.command_buffer[image_index])?; }
+        unsafe { device_vulkan.cmd_end_render_pass(*self.command_buffer[image_index].ptr()?); }
+        self.command_buffer[image_index].end()?;
 
         let wait_semaphores = &[self.image_available_semaphores[frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = &[self.command_buffer[image_index]];
+        let command_buffers = &[*self.command_buffer[image_index].ptr()?];
         let signal_semaphores = &[self.render_finished_semaphores[frame]];
         let submit_info = vk::SubmitInfo::builder()
             .wait_semaphores(wait_semaphores)
@@ -390,7 +391,7 @@ impl Swapchain {
         self.frame.store((frame + 1) % MAX_FRAMES_IN_FLIGHT, Ordering::SeqCst);
         Ok(false)
     }
-    
+
     pub fn ctx(&self) -> SwapchainCtx {
         SwapchainCtx(Arc::downgrade(&self.data))
     }
@@ -409,7 +410,6 @@ impl Drop for Swapchain {
         self.destroy_swapchain().unwrap();
 
         unsafe {
-
             self.render_finished_semaphores
                 .iter()
                 .for_each(|s| device.device().destroy_semaphore(*s, None));

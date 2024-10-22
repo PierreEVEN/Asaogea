@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Error};
 use vulkanalia::{vk, Device};
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
+use crate::application::gfx::command_buffer::CommandBuffer;
 use crate::application::gfx::device::DeviceCtx;
 
 #[derive(Clone)]

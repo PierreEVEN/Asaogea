@@ -13,7 +13,9 @@ use std::ffi::c_char;
 use std::ptr::null_mut;
 use std::slice;
 use vulkanalia::vk;
-use vulkanalia::vk::{CommandBuffer, DeviceV1_0, ImageType};
+use vulkanalia::vk::{DeviceV1_0, ImageType};
+use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
+use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::swapchain::{SwapchainCtx, SwapchainData};
 
 const PIXEL: &str = r#"
@@ -228,8 +230,6 @@ impl ImGui {
     pub fn render(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
         let io = unsafe { &mut *igGetIO() };
 
-        let device = self.ctx.get().device().get();
-        let device_vulkan = device.device();
         let window = self.ctx.get().window().get();
         let window_data = window.read();
 
@@ -309,12 +309,8 @@ impl ImGui {
             translate_x: -1.0 - draw_data.DisplayPos.x * scale_x,
             translate_y: 1.0 - draw_data.DisplayPos.y * scale_y,
         };
-
-        unsafe {
-            device_vulkan.cmd_push_constants(*command_buffer, *self.pipeline.ptr_pipeline_layout(), vk::ShaderStageFlags::VERTEX, 0,
-                                             slice::from_raw_parts(&push_constants as *const ImGuiPushConstants as *const u8, size_of::<ImGuiPushConstants>()),
-            );
-        }
+        
+        command_buffer.push_constant(&self.pipeline, &BufferMemory::from_struct(&push_constants), vk::ShaderStageFlags::VERTEX);
 
         // Will project scissor/clipping rectangles into framebuffer space
         let clip_off = draw_data.DisplayPos;         // (0,0) unless using multi-viewports
@@ -354,13 +350,12 @@ impl ImGui {
                                 clip_rect.y = 0.0;
                             }
 
-                            // Apply scissor/clipping rectangle
-                            unsafe {
-                                device_vulkan.cmd_set_scissor(*command_buffer, 0, &[vk::Rect2D {
-                                    extent: vk::Extent2D { width: (clip_rect.z - clip_rect.x) as u32, height: (clip_rect.w - clip_rect.y) as u32 },
-                                    offset: vk::Offset2D { x: clip_rect.x as i32, y: clip_rect.y as i32 },
-                                }])
-                            }
+                            command_buffer.set_scissor(Scissors {
+                                min_x: clip_rect.x as i32,
+                                min_y: clip_rect.y as i32,
+                                width: (clip_rect.z - clip_rect.x) as u32,
+                                height: (clip_rect.w - clip_rect.y) as u32,
+                            });
 
                             // Bind descriptor set with font or user texture
                             /* @TODO : handle images
@@ -369,39 +364,10 @@ impl ImGui {
                             }
                              */
 
-                            unsafe {
-                                device_vulkan.cmd_bind_pipeline(
-                                    *command_buffer,
-                                    vk::PipelineBindPoint::GRAPHICS,
-                                    *self.pipeline.ptr_pipeline(),
-                                );
-                            }
-
-                            unsafe {
-                                device_vulkan.cmd_bind_descriptor_sets(
-                                    *command_buffer,
-                                    vk::PipelineBindPoint::GRAPHICS,
-                                    *self.pipeline.ptr_pipeline_layout(),
-                                    0,
-                                    &[*self.descriptor_sets.ptr()?],
-                                    &[],
-                                );
-                            }
-
-                            // Draw mesh
-                            unsafe {
-                                device_vulkan.cmd_bind_index_buffer(
-                                    *command_buffer,
-                                    *self.mesh.index_buffer()?.ptr()?,
-                                    0 as vk::DeviceSize,
-                                    vk::IndexType::UINT16);
-                                device_vulkan.cmd_bind_vertex_buffers(
-                                    *command_buffer,
-                                    0,
-                                    &[*self.mesh.vertex_buffer()?.ptr()?],
-                                    &[0]);
-                                device_vulkan.cmd_draw_indexed(*command_buffer, pcmd.ElemCount, 1, pcmd.IdxOffset + global_idx_offset, (pcmd.VtxOffset + global_vtx_offset) as i32, 0);
-                            }
+                            command_buffer.bind_pipeline(&self.pipeline);
+                            command_buffer.bind_descriptors(&self.pipeline, &self.descriptor_sets);
+                            
+                            command_buffer.draw_mesh_advanced(&self.mesh, pcmd.IdxOffset + global_idx_offset, (pcmd.VtxOffset + global_vtx_offset) as i32, pcmd.ElemCount, 1, 0);
                         }
                     }
                 }
