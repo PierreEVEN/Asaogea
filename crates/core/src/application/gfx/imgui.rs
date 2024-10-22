@@ -14,6 +14,7 @@ use std::ptr::null_mut;
 use std::slice;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, ImageType};
+use winit::event::MouseButton;
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::swapchain::{SwapchainCtx, SwapchainData};
@@ -238,17 +239,17 @@ impl ImGui {
         io.DeltaTime = f32::max(window_data.delta_time as f32, 0.0000000001f32);
 
         // Update mouse
-        io.MouseDown[0] = window_data.left_pressed;
-        io.MouseDown[1] = window_data.right_pressed;
-        io.MouseDown[2] = false;
-        io.MouseDown[3] = false;
-        io.MouseDown[4] = false;
+        io.MouseDown[0] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Left);
+        io.MouseDown[1] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Right);
+        io.MouseDown[2] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Middle);
+        io.MouseDown[3] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Other(0));
+        io.MouseDown[4] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Other(1));
+        let mouse_pos = window_data.input_manager().mouse_position();
         io.MouseHoveredViewport = 0;
-        io.MousePos = ImVec2 { x: window_data.mouse_x as f32, y: window_data.mouse_y as f32 };
+        io.MousePos = ImVec2 { x: mouse_pos.x as f32, y: mouse_pos.y as f32 };
 
         unsafe { igNewFrame(); }
-
-
+        
         unsafe { igShowDemoWindow(null_mut()); }
 
 
@@ -309,7 +310,7 @@ impl ImGui {
             translate_x: -1.0 - draw_data.DisplayPos.x * scale_x,
             translate_y: 1.0 - draw_data.DisplayPos.y * scale_y,
         };
-        
+
         command_buffer.push_constant(&self.pipeline, &BufferMemory::from_struct(&push_constants), vk::ShaderStageFlags::VERTEX);
 
         // Will project scissor/clipping rectangles into framebuffer space
@@ -366,7 +367,7 @@ impl ImGui {
 
                             command_buffer.bind_pipeline(&self.pipeline);
                             command_buffer.bind_descriptors(&self.pipeline, &self.descriptor_sets);
-                            
+
                             command_buffer.draw_mesh_advanced(&self.mesh, pcmd.IdxOffset + global_idx_offset, (pcmd.VtxOffset + global_vtx_offset) as i32, pcmd.ElemCount, 1, 0);
                         }
                     }

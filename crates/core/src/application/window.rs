@@ -11,6 +11,7 @@ use crate::application::gfx::device::DeviceCtx;
 use crate::application::gfx::instance::Instance;
 use crate::application::gfx::surface::Surface;
 use crate::application::gfx::swapchain::Swapchain;
+use crate::application::input_manager::InputManager;
 use crate::engine::{Engine, EngineCtx};
 use crate::options::{WindowOptions};
 
@@ -30,10 +31,7 @@ pub struct WindowData {
     surface: Option<Surface>,
     window: Option<Window>,
     engine: EngineCtx,
-    pub mouse_x: f64,
-    pub mouse_y: f64,
-    pub left_pressed: bool,
-    pub right_pressed: bool,
+    input_manager: InputManager,
     pub delta_time: f64,
 }
 
@@ -56,6 +54,10 @@ impl WindowData {
     pub fn height(&self) -> Result<u32, Error> {
         Ok(self.window.as_ref().ok_or(anyhow!("Window is null"))?.inner_size().height)
     }
+    
+    pub fn input_manager(&self) -> &InputManager {
+        &self.input_manager
+    }
 }
 
 impl AppWindow {}
@@ -73,10 +75,7 @@ impl AppWindow {
                 surface: Some(surface),
                 swapchain: RwSLock::new(None),
                 engine: ctx,
-                mouse_x: 0.0,
-                mouse_y: 0.0,
-                left_pressed: false,
-                right_pressed: false,
+                input_manager: InputManager::default(),
                 delta_time: 0.0,
             }),
             minimized: false,
@@ -94,35 +93,8 @@ impl AppWindow {
     }
 
     pub fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) -> Result<(), Error> {
+        self.data.write().input_manager.consume_event(&event);
         match event {
-            WindowEvent::CursorMoved { device_id: _device_id, position } => {
-                self.data.write().mouse_x = position.x;
-                self.data.write().mouse_y = position.y;
-            }
-            WindowEvent::MouseInput { device_id: _device_id, state: element_state, button: mouse_button } => {
-                match element_state {
-                    ElementState::Pressed => {
-                        match mouse_button {
-                            MouseButton::Left => { self.data.write().left_pressed = true }
-                            MouseButton::Right => { self.data.write().right_pressed = true }
-                            MouseButton::Middle => {}
-                            MouseButton::Back => {}
-                            MouseButton::Forward => {}
-                            MouseButton::Other(_) => {}
-                        }
-                    }
-                    ElementState::Released => {
-                        match mouse_button {
-                            MouseButton::Left => { self.data.write().left_pressed = false }
-                            MouseButton::Right => { self.data.write().right_pressed = false }
-                            MouseButton::Middle => {}
-                            MouseButton::Back => {}
-                            MouseButton::Forward => {}
-                            MouseButton::Other(_) => {}
-                        }
-                    }
-                }
-            }
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
@@ -131,6 +103,7 @@ impl AppWindow {
                 self.data.write().delta_time = elapsed;
                 self.last_frame_time = Instant::now();
                 if !self.minimized {
+                    self.data.write().input_manager.begin_frame();
                     let should_recreate = match self.data.read().swapchain.write()?.as_mut().unwrap().render() {
                         Ok(should_recreate) => { should_recreate }
                         Err(err) => {

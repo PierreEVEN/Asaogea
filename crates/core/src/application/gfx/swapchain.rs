@@ -344,15 +344,14 @@ impl Swapchain {
         });
 
 
-        if self.imgui_temp.is_none() {
-            self.imgui_temp = Some(ImGui::new(self.ctx())?);
-        }
-
         if self.test_app.is_none() {
             self.test_app = Some(TestApp::new(self.ctx(), self.present_pass.as_ref().unwrap())?);
         }
         self.test_app.as_mut().unwrap().render(&self.command_buffer[image_index])?;
 
+        if self.imgui_temp.is_none() {
+            self.imgui_temp = Some(ImGui::new(self.ctx())?);
+        }
         self.imgui_temp.as_mut().unwrap().render(&self.command_buffer[image_index])?;
 
         unsafe { device_vulkan.cmd_end_render_pass(*self.command_buffer[image_index].ptr()?); }
@@ -399,12 +398,10 @@ impl Swapchain {
 
 impl Drop for Swapchain {
     fn drop(&mut self) {
-        self.imgui_temp = None;
-
         let device = self.data.device.get();
-
-
         unsafe { device.device().device_wait_idle().unwrap(); }
+
+        self.imgui_temp = None;
 
         self.present_pass = None;
         self.destroy_swapchain().unwrap();
