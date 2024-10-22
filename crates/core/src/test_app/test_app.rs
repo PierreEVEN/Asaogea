@@ -59,11 +59,7 @@ float pow_cord(float val) {
 [[vk::binding(1)]]   Texture2D	 sTexture;
 
 float4 main(VsToFs input) : SV_TARGET {
-
-    
-
     float intens = ((pow_cord(input.vtxpos.x) + pow_cord(input.vtxpos.y) + pow_cord(input.vtxpos.z)) * 0.4 + 0.1) * 0.01;
-    
     return sTexture.Sample(sSampler, input.vtxpos.xy) + float4(float3(intens, intens, intens), 1);
 }
 "#;
@@ -167,50 +163,8 @@ impl TestApp {
         ])?;
 
 
-        let mut dyn_mesh = DynamicMesh::new(size_of::<Vec3>(), ctx.get().device().clone())?;
-
-        for mesh in document.meshes() {
-            for primitive in mesh.primitives() {
-                let mut vertices = vec![];
-
-                let reader = primitive.reader(|data| Some(&buffers[data.index()]));
-                let positions = reader.read_positions().unwrap();
-                vertices.reserve(positions.len());
-                for position in positions {
-                    vertices.push(position);
-                }
-
-                match reader.read_indices() {
-                    None => {
-                        dyn_mesh.set_vertices(0, &BufferMemory::from_vec(&vertices))?;
-                    }
-                    Some(indices) => {
-                        match indices {
-                            ReadIndices::U8(indices) => {
-                                dyn_mesh = dyn_mesh.index_type(IndexBufferType::Uint8);
-                                let indices: Vec<u8> = indices.collect();
-                                dyn_mesh.set_indexed_vertices(0, &BufferMemory::from_vec(&vertices), 0, &BufferMemory::from_vec(&indices))?;
-                            }
-                            ReadIndices::U16(indices) => {
-                                dyn_mesh = dyn_mesh.index_type(IndexBufferType::Uint16);
-                                let indices: Vec<u16> = indices.collect();
-                                dyn_mesh.set_indexed_vertices(0, &BufferMemory::from_vec(&vertices), 0, &BufferMemory::from_vec(&indices))?;
-                            }
-                            ReadIndices::U32(indices) => {
-                                dyn_mesh = dyn_mesh.index_type(IndexBufferType::Uint32);
-                                let indices: Vec<u32> = indices.collect();
-                                dyn_mesh.set_indexed_vertices(0, &BufferMemory::from_vec(&vertices), 0, &BufferMemory::from_vec(&indices))?;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-
         Ok(Self {
             pipeline,
-            mesh: dyn_mesh,
             ctx,
             descriptor_sets,
             camera,
@@ -227,7 +181,7 @@ impl TestApp {
         let mut buffers = Vec::new();
         for buffer in document.buffers() {
             let mut data = match buffer.source() {
-                gltf::buffer::Source::Uri(uri) => Scheme::read(base, uri),
+                gltf::buffer::Source::Uri(uri) => todo!(),//Scheme::read(base, uri),
                 gltf::buffer::Source::Bin => blob.take().ok_or(anyhow!("Missing bin data")),
             }?;
             if data.len() < buffer.length() {
@@ -252,6 +206,7 @@ impl TestApp {
             Ok(Jpeg) => Some(Jpeg),
             _ => None,
         };
+        /*
         let result_image;
         let document_image = document.images().nth(image_index).unwrap();
         match document_image.source() {
@@ -316,6 +271,9 @@ impl TestApp {
             _ => return Err(anyhow!("unknown format")),
         }
         Ok(result_image)
+        
+         */
+        todo!()
     }
 
     pub fn render(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
@@ -394,76 +352,5 @@ impl TestApp {
         command_buffer.draw_mesh(&self.mesh, 1, 0);
 
         Ok(())
-    }
-}
-
-
-/// Represents the set of URI schemes the importer supports.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-enum Scheme<'a> {
-    /// `data:[<media type>];base64,<data>`.
-    Data(Option<&'a str>, &'a str),
-
-    /// `file:[//]<absolute file path>`.
-    ///
-    /// Note: The file scheme does not implement authority.
-    File(&'a str),
-
-    /// `../foo`, etc.
-    Relative,
-
-    /// Placeholder for an unsupported URI scheme identifier.
-    Unsupported,
-}
-
-impl<'a> Scheme<'a> {
-    fn parse(uri: &str) -> Scheme<'_> {
-        if uri.contains(':') {
-            if let Some(rest) = uri.strip_prefix("data:") {
-                let mut it = rest.split(";base64,");
-
-                match (it.next(), it.next()) {
-                    (match0_opt, Some(match1)) => Scheme::Data(match0_opt, match1),
-                    (Some(match0), _) => Scheme::Data(None, match0),
-                    _ => Scheme::Unsupported,
-                }
-            } else if let Some(rest) = uri.strip_prefix("file://") {
-                Scheme::File(rest)
-            } else if let Some(rest) = uri.strip_prefix("file:") {
-                Scheme::File(rest)
-            } else {
-                Scheme::Unsupported
-            }
-        } else {
-            Scheme::Relative
-        }
-    }
-
-    fn read(base: Option<&Path>, uri: &str) -> Result<Vec<u8>, Error> {
-        match Scheme::parse(uri) {
-            // The path may be unused in the Scheme::Data case
-            // Example: "uri" : "data:application/octet-stream;base64,wsVHPgA...."
-            Scheme::Data(_, base64) => base64::decode(&base64).map_err(|err| anyhow!("Failed to decode base64 : {err}")),
-            Scheme::File(path) if base.is_some() => Self::read_to_end(path),
-            Scheme::Relative if base.is_some() => Self::read_to_end(base.unwrap().join(uri)),
-            Scheme::Unsupported => Err(anyhow!("Unsupported data type")),
-            _ => Err(anyhow!("Unknown data type")),
-        }
-    }
-
-    fn read_to_end<P>(path: P) -> Result<Vec<u8>, Error>
-    where
-        P: AsRef<Path>,
-    {
-        use std::io::Read;
-        let file = File::open(path.as_ref())?;
-        // Allocate one extra byte so the buffer doesn't need to grow before the
-        // final `read` call at the end of the file.  Don't worry about `usize`
-        // overflow because reading will fail regardless in that case.
-        let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
-        let mut reader = BufReader::new(file);
-        let mut data = Vec::with_capacity(length as usize);
-        reader.read_to_end(&mut data)?;
-        Ok(data)
     }
 }
