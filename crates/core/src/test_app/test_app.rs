@@ -1,23 +1,24 @@
-use std::f32::consts::PI;
-use std::ops::{Add, Sub};
-use std::slice;
-use anyhow::Error;
-use glam::{DVec2, Mat4, Vec3};
-use imgui::sys::ImDrawVert;
-use tracing::info;
-use vulkanalia::vk;
-use vulkanalia::vk::{DeviceV1_0};
-use winit::keyboard::{Key, NamedKey, SmolStr};
-use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
 use crate::application::gfx::render_pass::RenderPass;
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::DescriptorSets;
-use crate::application::gfx::resources::mesh::{DynamicMesh, IndexBufferType, MeshCreateInfos};
+use crate::application::gfx::resources::mesh::{DynamicMesh, IndexBufferType};
 use crate::application::gfx::resources::pipeline::{AlphaMode, Pipeline, PipelineConfig};
 use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageInfos, ShaderStageInputs};
 use crate::application::gfx::swapchain::SwapchainCtx;
 use crate::test_app::camera::Camera;
+use anyhow::{anyhow, Error};
+use glam::{DVec2, Mat4, Vec3};
+use gltf::mesh::util::ReadIndices;
+use gltf::Gltf;
+use shaders::compiler::{HlslCompiler, RawShaderDefinition};
+use std::f32::consts::PI;
+use std::fs::File;
+use std::io::BufReader;
+use std::ops::Sub;
+use std::path::{Path, PathBuf};
+use vulkanalia::vk;
+use winit::keyboard::{Key, NamedKey, SmolStr};
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -25,6 +26,7 @@ struct VSInput {
 };
 struct VsToFs {
     float4 Pos 		: SV_Position;
+    float4 vtxpos : POSITION0;
 };
 struct PushConsts {
     float4x4 model;
@@ -34,6 +36,7 @@ struct PushConsts {
 VsToFs main(VSInput input) {
     VsToFs Out;
     Out.Pos 	= mul(pc.camera, mul(pc.model, float4(input.aPos, 1)));
+    Out.vtxpos = float4(input.aPos, 1);
     return Out;
 }
 "#;
@@ -41,10 +44,20 @@ VsToFs main(VSInput input) {
 const FRAGMENT: &str = r#"
 struct VsToFs {
     float4 Pos 		: SV_Position;
+    float4 vtxpos : POSITION0;
 };
 
+float pow_cord(float val) {
+    return pow(abs(sin(val * 50)), 10);
+}
+
 float4 main(VsToFs input) : SV_TARGET {
-    return float4(1, 0, 0, 1);
+
+    
+
+    float intens = (pow_cord(input.vtxpos.x) + pow_cord(input.vtxpos.y) + pow_cord(input.vtxpos.z)) * 0.4 + 0.1;
+    
+    return float4(float3(intens, intens, intens), 1);
 }
 "#;
 
@@ -56,6 +69,7 @@ pub struct TestApp {
     camera: Camera,
     pitch: f32,
     yaw: f32,
+    speed: f32,
     last_mouse: DVec2,
 }
 
@@ -97,34 +111,92 @@ impl TestApp {
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
             polygon_mode: vk::PolygonMode::FILL,
-            alpha_mode: AlphaMode::Translucent,
+            alpha_mode: AlphaMode::Opaque,
             depth_test: true,
             line_width: 1.0,
         })?;
 
         let descriptor_sets = DescriptorSets::new(ctx.get().device().clone(), pipeline.descriptor_set_layout())?;
 
-        let mut mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.get().device().clone(), MeshCreateInfos { index_type: IndexBufferType::Uint32 })?;
-
-        let vertices = [Vec3::new(-1f32, -1f32, 0f32), Vec3::new(1f32, -1f32, 0f32), Vec3::new(1f32, 1f32, 0f32), Vec3::new(-1f32, 1f32, 0f32)];
-        let sl_vertices = unsafe { slice::from_raw_parts(vertices.as_ptr() as *const u8, vertices.len() * size_of::<Vec3>()) };
-        let indices: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
-        let sl_indices = unsafe { slice::from_raw_parts(indices.as_ptr() as *const u8, indices.len() * size_of::<u32>()) };
-        mesh.set_data(0, sl_vertices, 0, sl_indices)?;
-
         let mut camera = Camera::default();
         camera.set_position(Vec3::new(0f32, 0f32, 0.5f32));
 
+
+        let Gltf { document, blob } = Gltf::open("resources/models/sample/Lantern.glb")?;
+        let buffers = Self::import_buffer_data(&document, Some(PathBuf::from("resources/models/sample/scifihelmet/").as_path()), blob)?;
+
+
+        let mut dyn_mesh = DynamicMesh::new(size_of::<Vec3>(), ctx.get().device().clone())?;
+
+        for mesh in document.meshes() {
+            for primitive in mesh.primitives() {
+                let mut vertices = vec![];
+
+                let reader = primitive.reader(|data| Some(&buffers[data.index()]));
+                let positions = reader.read_positions().unwrap();
+                vertices.reserve(positions.len());
+                for position in positions {
+                    vertices.push(position);
+                }
+
+                match reader.read_indices() {
+                    None => {
+                        dyn_mesh.set_vertices(0, &BufferMemory::from_vec(&vertices))?;
+                    }
+                    Some(indices) => {
+                        match indices {
+                            ReadIndices::U8(indices) => {
+                                dyn_mesh = dyn_mesh.index_type(IndexBufferType::Uint8);
+                                let indices: Vec<u8> = indices.collect();
+                                dyn_mesh.set_indexed_vertices(0, &BufferMemory::from_vec(&vertices), 0, &BufferMemory::from_vec(&indices))?;
+                            }
+                            ReadIndices::U16(indices) => {
+                                dyn_mesh = dyn_mesh.index_type(IndexBufferType::Uint16);
+                                let indices: Vec<u16> = indices.collect();
+                                dyn_mesh.set_indexed_vertices(0, &BufferMemory::from_vec(&vertices), 0, &BufferMemory::from_vec(&indices))?;
+                            }
+                            ReadIndices::U32(indices) => {
+                                dyn_mesh = dyn_mesh.index_type(IndexBufferType::Uint32);
+                                let indices: Vec<u32> = indices.collect();
+                                dyn_mesh.set_indexed_vertices(0, &BufferMemory::from_vec(&vertices), 0, &BufferMemory::from_vec(&indices))?;
+                            }
+                        }
+                    }
+                }
+
+            }
+        }
+
+
         Ok(Self {
             pipeline,
-            mesh,
+            mesh: dyn_mesh,
             ctx,
             descriptor_sets,
             camera,
             pitch: 0.0,
             yaw: 0.0,
+            speed: 2f32,
             last_mouse: Default::default(),
         })
+    }
+
+    fn import_buffer_data(document: &gltf::Document, base: Option<&Path>, mut blob: Option<Vec<u8>>) -> Result<Vec<gltf::buffer::Data>, Error> {
+        let mut buffers = Vec::new();
+        for buffer in document.buffers() {
+            let mut data = match buffer.source() {
+                gltf::buffer::Source::Uri(uri) => Scheme::read(base, uri),
+                gltf::buffer::Source::Bin => blob.take().ok_or(anyhow!("Missing bin data")),
+            }?;
+            if data.len() < buffer.length() {
+                return Err(anyhow!("Buffer too short"));
+            }
+            while data.len() % 4 != 0 {
+                data.push(0);
+            }
+            buffers.push(gltf::buffer::Data(data));
+        }
+        Ok(buffers)
     }
 
     pub fn render(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
@@ -135,9 +207,23 @@ impl TestApp {
         let inputs = w.input_manager();
         let ds = self.ctx.get().window().get().read().delta_time;
 
-        let speed = 10f32;
+        let speed = self.speed;
 
         let mut delta = Vec3::default();
+
+        self.speed *= inputs.scroll_delta().y as f32 * 0.25f32 + 1f32;
+
+        if inputs.is_key_pressed(&Key::Named(NamedKey::PageUp)) {
+            self.speed += 1f32 * ds as f32;
+        };
+
+        if inputs.is_key_pressed(&Key::Named(NamedKey::PageDown)) {
+            self.speed -= 1f32 * ds as f32;
+            if self.speed < 0.1 {
+                self.speed = 0.1;
+            }
+        };
+        
         if inputs.is_key_pressed(&Key::Character(SmolStr::from("z"))) {
             delta += &Vec3::new(ds as f32 * speed, 0f32, 0f32);
         };
@@ -189,5 +275,76 @@ impl TestApp {
         command_buffer.draw_mesh(&self.mesh, 1, 0);
 
         Ok(())
+    }
+}
+
+
+/// Represents the set of URI schemes the importer supports.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum Scheme<'a> {
+    /// `data:[<media type>];base64,<data>`.
+    Data(Option<&'a str>, &'a str),
+
+    /// `file:[//]<absolute file path>`.
+    ///
+    /// Note: The file scheme does not implement authority.
+    File(&'a str),
+
+    /// `../foo`, etc.
+    Relative,
+
+    /// Placeholder for an unsupported URI scheme identifier.
+    Unsupported,
+}
+
+impl<'a> Scheme<'a> {
+    fn parse(uri: &str) -> Scheme<'_> {
+        if uri.contains(':') {
+            if let Some(rest) = uri.strip_prefix("data:") {
+                let mut it = rest.split(";base64,");
+
+                match (it.next(), it.next()) {
+                    (match0_opt, Some(match1)) => Scheme::Data(match0_opt, match1),
+                    (Some(match0), _) => Scheme::Data(None, match0),
+                    _ => Scheme::Unsupported,
+                }
+            } else if let Some(rest) = uri.strip_prefix("file://") {
+                Scheme::File(rest)
+            } else if let Some(rest) = uri.strip_prefix("file:") {
+                Scheme::File(rest)
+            } else {
+                Scheme::Unsupported
+            }
+        } else {
+            Scheme::Relative
+        }
+    }
+
+    fn read(base: Option<&Path>, uri: &str) -> Result<Vec<u8>, Error> {
+        match Scheme::parse(uri) {
+            // The path may be unused in the Scheme::Data case
+            // Example: "uri" : "data:application/octet-stream;base64,wsVHPgA...."
+            Scheme::Data(_, base64) => base64::decode(&base64).map_err(|err| anyhow!("Failed to decode base64 : {err}")),
+            Scheme::File(path) if base.is_some() => Self::read_to_end(path),
+            Scheme::Relative if base.is_some() => Self::read_to_end(base.unwrap().join(uri)),
+            Scheme::Unsupported => Err(anyhow!("Unsupported data type")),
+            _ => Err(anyhow!("Unknown data type")),
+        }
+    }
+
+    fn read_to_end<P>(path: P) -> Result<Vec<u8>, Error>
+    where
+        P: AsRef<Path>,
+    {
+        use std::io::Read;
+        let file = File::open(path.as_ref())?;
+        // Allocate one extra byte so the buffer doesn't need to grow before the
+        // final `read` call at the end of the file.  Don't worry about `usize`
+        // overflow because reading will fail regardless in that case.
+        let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
+        let mut reader = BufReader::new(file);
+        let mut data = Vec::with_capacity(length as usize);
+        reader.read_to_end(&mut data)?;
+        Ok(data)
     }
 }

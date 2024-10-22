@@ -29,67 +29,78 @@ pub struct BufferCreateInfo {
 pub struct Buffer {
     buffer: Option<vk::Buffer>,
     buffer_memory: Option<vulkanalia_vma::Allocation>,
-    size: usize,
+    elements: usize,
+    stride: usize,
     create_infos: BufferCreateInfo,
-    ctx: DeviceCtx
+    ctx: DeviceCtx,
 }
 
 impl Buffer {
-    pub fn new(ctx: DeviceCtx, mut size: usize, create_infos: BufferCreateInfo) -> Result<Self, Error> {
-        if size == 0 {
-            size = 1;
-        }
+    pub fn new(ctx: DeviceCtx, stride: usize, elements: usize, create_infos: BufferCreateInfo) -> Result<Self, Error> {
+        assert!(stride > 0);
         let mut buffer = Self {
             buffer: None,
             buffer_memory: None,
+            elements,
+            stride,
             create_infos,
-            size,
             ctx,
         };
         buffer.create()?;
         Ok(buffer)
     }
 
-    pub fn resize(&mut self, mut size: usize) -> Result<(), Error> {
-        if size == 0 {
-            size = 1;
+    pub fn from_buffer_memory(ctx: DeviceCtx, memory: &BufferMemory, create_infos: BufferCreateInfo) -> Result<Self, Error> {
+        let mut buffer = Self::new(ctx, memory.stride, memory.elements, create_infos)?;
+        buffer.set_data(0, memory)?;
+        Ok(buffer)
+    }
+    
+    pub fn resize(&mut self, mut new_element_count: usize) -> Result<(), Error> {
+        if new_element_count == 0 {
+            new_element_count = 1;
         }
-        if size == self.size {
+        if new_element_count == self.elements {
             return Ok(());
         }
 
         self.destroy();
-
-        self.size = size;
-
+        self.elements = new_element_count;
         self.create()?;
-
         Ok(())
     }
 
-    pub fn set_data(&mut self, start_offset: usize, data: &[u8]) -> Result<(), Error> {
-        if start_offset + data.len() > self.size {
-            return Err(anyhow!("buffer is to small : size={}, expected={}", self.size, start_offset + data.len()));
+    pub fn set_data(&mut self, start_offset: usize, data: &BufferMemory) -> Result<(), Error> {
+        if start_offset + data.get_size() > self.size() {
+            return Err(anyhow!("buffer is to small : size={}, expected={}", self.size(), start_offset + data.get_size()));
         }
         unsafe {
-            let mapped_memory = self.ctx.get().allocator().map_memory(self.buffer_memory.unwrap()).unwrap();
-            data.as_ptr().copy_to(mapped_memory.add(start_offset), data.len());
+            let mapped_memory = self.ctx.get().allocator().map_memory(self.buffer_memory.unwrap())?;
+            data.get_ptr(0).copy_to(mapped_memory.add(start_offset), data.get_size());
             self.ctx.get().allocator().unmap_memory(self.buffer_memory.unwrap());
         }
         Ok(())
     }
-
     pub fn size(&self) -> usize {
-        self.size
+        self.elements * self.stride
     }
-
+    pub fn elements(&self) -> usize {
+        self.elements
+    }
+    pub fn stride(&self) -> usize {
+        self.stride
+    }
     pub fn ptr(&self) -> Result<&vk::Buffer, Error> {
-        self.buffer.as_ref().ok_or(anyhow!("Invalid buffer"))
+        self.buffer.as_ref().ok_or(anyhow!("Buffer is null"))
     }
 
     pub fn create(&mut self) -> Result<(), Error> {
+        if self.elements == 0 {
+            return Ok(());
+        }
+
         let buffer_info = vk::BufferCreateInfo::builder()
-            .size(self.size as u64)
+            .size(self.size() as u64)
             .usage(self.create_infos.usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let mut options = vulkanalia_vma::AllocationOptions::default();
@@ -117,7 +128,9 @@ impl Buffer {
     }
 
     fn destroy(&self) {
-        unsafe { self.ctx.get().allocator().destroy_buffer(self.buffer.unwrap(), self.buffer_memory.unwrap()) }
+        if let Some(buffer) = self.buffer {
+            unsafe { self.ctx.get().allocator().destroy_buffer(buffer, self.buffer_memory.unwrap()) }
+        }
     }
 }
 
@@ -141,20 +154,44 @@ impl Drop for Buffer {
 
 
 pub struct BufferMemory {
-    size: usize,
     data: *const u8,
+    stride: usize,
+    elements: usize,
 }
 
 impl BufferMemory {
-    pub fn from(data: *const u8, size: usize) -> Self {
-        Self { data, size }
+    pub fn from_raw(data: *const u8, stride: usize, elements: usize) -> Self {
+        assert!(stride >= 1);
+        assert!(elements >= 1);
+        Self { data, stride, elements }
     }
 
     pub fn from_struct<T: Sized>(structure: &T) -> Self {
         Self {
             data: structure as *const T as *const u8,
-            size: size_of::<T>(),
+            stride: size_of::<T>(),
+            elements: 1,
         }
+    }
+
+    pub fn from_vec<T: Sized>(structure: &Vec<T>) -> Self {
+        Self {
+            data: structure.as_ptr() as *const u8,
+            stride: size_of::<T>(),
+            elements: structure.len(),
+        }
+    }
+
+    pub fn elements(&self) -> usize {
+        self.elements
+    }
+
+    pub fn stride(&self) -> usize {
+        self.stride
+    }
+
+    pub fn get_size(&self) -> usize {
+        self.stride * self.elements
     }
 
     pub fn get_ptr(&self, offset: usize) -> *mut u8 {
@@ -162,11 +199,7 @@ impl BufferMemory {
         unsafe { data.offset(offset as isize) }
     }
 
-    pub fn get_size(&self) -> usize {
-        self.size
-    }
-
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { ::std::slice::from_raw_parts(self.data, self.size) }
+        unsafe { ::std::slice::from_raw_parts(self.data, self.get_size()) }
     }
 }

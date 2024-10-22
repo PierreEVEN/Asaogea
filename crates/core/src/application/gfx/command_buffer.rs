@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use vulkanalia::vk;
 use vulkanalia::vk::{CommandBufferBeginInfo, CommandBufferResetFlags, CommandBufferUsageFlags, DeviceV1_0, HasBuilder};
 use crate::application::gfx::render_pass::RenderPass;
-use crate::application::gfx::resources::buffer::BufferMemory;
+use crate::application::gfx::resources::buffer::{Buffer, BufferMemory};
 use crate::application::gfx::resources::descriptor_sets::DescriptorSets;
 use crate::application::gfx::resources::mesh::DynamicMesh;
 use crate::application::gfx::resources::pipeline::Pipeline;
@@ -138,43 +138,69 @@ impl CommandBuffer {
 
     pub fn draw_mesh(&self, mesh: &DynamicMesh, _instance_count: u32, _first_instance: u32) {
         unsafe {
-            self.ctx.get().device().cmd_bind_index_buffer(
-                self.command_buffer.unwrap(),
-                *mesh.index_buffer().unwrap().ptr().unwrap(),
-                0 as vk::DeviceSize,
-                mesh.index_buffer_type());
+            let vertex_buffer = if let Some(vertex_buffer) = mesh.vertex_buffer() { vertex_buffer } else { return; };
             self.ctx.get().device().cmd_bind_vertex_buffers(
                 self.command_buffer.unwrap(),
                 0,
-                &[*mesh.vertex_buffer().unwrap().ptr().unwrap()],
+                &[*vertex_buffer.ptr().unwrap()],
                 &[0]);
-            self.ctx.get().device().cmd_draw_indexed(self.command_buffer.unwrap(),
+
+            match mesh.index_buffer() {
+                None => {
+                    self.ctx.get().device().cmd_draw(self.command_buffer.unwrap(),
                                                      mesh.index_count() as u32,
                                                      1,
                                                      0,
-                                                     0,
                                                      0);
+                }
+                Some(index_buffer) => {
+                    self.ctx.get().device().cmd_bind_index_buffer(
+                        self.command_buffer.unwrap(),
+                        *index_buffer.ptr().unwrap(),
+                        0 as vk::DeviceSize,
+                        mesh.vk_index_type());
+                    self.ctx.get().device().cmd_draw_indexed(self.command_buffer.unwrap(),
+                                                             mesh.index_count() as u32,
+                                                             1,
+                                                             0,
+                                                             0,
+                                                             0);
+                }
+            }
         }
     }
 
-    pub fn draw_mesh_advanced(&self, mesh: &DynamicMesh, first_index: u32, vertex_offset: i32, index_count: u32, instance_count: u32, first_instance: u32) {
+    pub fn draw_mesh_advanced(&self, mesh: &DynamicMesh, first_index: u32, vertex_offset: u32, index_count: u32, instance_count: u32, first_instance: u32) {
         unsafe {
-            self.ctx.get().device().cmd_bind_index_buffer(
-                self.command_buffer.unwrap(),
-                *mesh.index_buffer().unwrap().ptr().unwrap(),
-                0 as vk::DeviceSize,
-                mesh.index_buffer_type());
+            let vertex_buffer = if let Some(vertex_buffer) = mesh.vertex_buffer() { vertex_buffer } else { return; };
             self.ctx.get().device().cmd_bind_vertex_buffers(
                 self.command_buffer.unwrap(),
                 0,
-                &[*mesh.vertex_buffer().unwrap().ptr().unwrap()],
+                &[*vertex_buffer.ptr().unwrap()],
                 &[0]);
-            self.ctx.get().device().cmd_draw_indexed(self.command_buffer.unwrap(),
+
+            match mesh.index_buffer() {
+                None => {
+                    self.ctx.get().device().cmd_draw(self.command_buffer.unwrap(),
                                                      index_count,
                                                      instance_count,
-                                                     first_index,
                                                      vertex_offset,
                                                      first_instance);
+                }
+                Some(index_buffer) => {
+                    self.ctx.get().device().cmd_bind_index_buffer(
+                        self.command_buffer.unwrap(),
+                        *index_buffer.ptr().unwrap(),
+                        0 as vk::DeviceSize,
+                        mesh.vk_index_type());
+                    self.ctx.get().device().cmd_draw_indexed(self.command_buffer.unwrap(),
+                                                             index_count,
+                                                             instance_count,
+                                                             first_index,
+                                                             vertex_offset as i32,
+                                                             first_instance);
+                }
+            }
         }
     }
 

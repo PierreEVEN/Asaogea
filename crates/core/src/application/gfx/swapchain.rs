@@ -319,10 +319,6 @@ impl Swapchain {
         self.command_buffer[image_index].reset()?;
 
         let inheritance = vk::CommandBufferInheritanceInfo::builder();
-        let info = vk::CommandBufferBeginInfo::builder()
-            .flags(vk::CommandBufferUsageFlags::empty()) // Optional.
-            .inheritance_info(&inheritance);
-
         self.command_buffer[image_index].begin()?;
 
         let info = vk::RenderPassBeginInfo::builder()

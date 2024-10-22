@@ -1,7 +1,7 @@
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
-use crate::application::gfx::resources::mesh::{DynamicMesh, IndexBufferType, MeshCreateInfos};
+use crate::application::gfx::resources::mesh::{DynamicMesh, IndexBufferType};
 use crate::application::gfx::resources::pipeline::AlphaMode;
 use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
 use crate::application::gfx::resources::sampler::Sampler;
@@ -198,12 +198,10 @@ impl ImGui {
         }).unwrap();
 
         unsafe {
-            font_texture.set_data(Vec::from_raw_parts(pixels, data_size as usize, data_size as usize).as_slice()).unwrap();
+            font_texture.set_data(&BufferMemory::from_raw(pixels as *const u8, 1, data_size as usize))?;
         }
 
-        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.get().device().clone(), MeshCreateInfos {
-            index_type: IndexBufferType::Uint16,
-        })?;
+        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.get().device().clone())?.index_type(IndexBufferType::Uint16);
 
 
         //unsafe { (&mut *io.Fonts).TexID = font_texture.__static_view_handle() as ImTextureID; }
@@ -249,7 +247,7 @@ impl ImGui {
         io.MousePos = ImVec2 { x: mouse_pos.x as f32, y: mouse_pos.y as f32 };
 
         unsafe { igNewFrame(); }
-        
+
         unsafe { igShowDemoWindow(null_mut()); }
 
 
@@ -268,23 +266,15 @@ impl ImGui {
             let mut vertex_start = 0;
             let mut index_start = 0;
 
-            self.mesh.resize(draw_data.TotalVtxCount as usize, draw_data.TotalIdxCount as usize)?;
+            self.mesh.reserve_vertices(draw_data.TotalVtxCount as usize)?;
+            self.mesh.reserve_indices(draw_data.TotalIdxCount as usize)?;
 
             for n in 0..draw_data.CmdListsCount
             {
                 let cmd_list = &**draw_data.CmdLists.offset(n as isize);
 
-                self.mesh.set_data(vertex_start,
-                                   slice::from_raw_parts(
-                                       cmd_list.VtxBuffer.Data as *const u8,
-                                       cmd_list.VtxBuffer.Size as usize * size_of::<ImDrawVert>(),
-                                   ),
-                                   index_start,
-                                   slice::from_raw_parts(
-                                       cmd_list.IdxBuffer.Data as *const u8,
-                                       cmd_list.IdxBuffer.Size as usize * size_of::<ImDrawIdx>(),
-                                   ),
-                )?;
+                self.mesh.set_indexed_vertices(vertex_start, &BufferMemory::from_raw(cmd_list.VtxBuffer.Data as *const u8, size_of::<ImDrawVert>(), cmd_list.VtxBuffer.Size as usize),
+                                               index_start, &BufferMemory::from_raw(cmd_list.IdxBuffer.Data as *const u8, size_of::<ImDrawIdx>(), cmd_list.IdxBuffer.Size as usize))?;
 
                 vertex_start += cmd_list.VtxBuffer.Size as usize;
                 index_start += cmd_list.IdxBuffer.Size as usize;
@@ -368,7 +358,7 @@ impl ImGui {
                             command_buffer.bind_pipeline(&self.pipeline);
                             command_buffer.bind_descriptors(&self.pipeline, &self.descriptor_sets);
 
-                            command_buffer.draw_mesh_advanced(&self.mesh, pcmd.IdxOffset + global_idx_offset, (pcmd.VtxOffset + global_vtx_offset) as i32, pcmd.ElemCount, 1, 0);
+                            command_buffer.draw_mesh_advanced(&self.mesh, pcmd.IdxOffset + global_idx_offset, pcmd.VtxOffset + global_vtx_offset, pcmd.ElemCount, 1, 0);
                         }
                     }
                 }

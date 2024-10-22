@@ -1,6 +1,6 @@
 use crate::application::gfx::command_buffer::CommandBuffer;
 use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::resources::buffer::{Buffer, BufferAccess};
+use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferMemory};
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, FenceCreateInfo, HasBuilder};
@@ -70,8 +70,8 @@ impl Image {
         })
     }
 
-    pub fn set_data(&mut self, data: &[u8]) -> Result<(), Error> {
-        let mut transfer_buffer = Buffer::new(self.ctx.clone(), data.len(), crate::application::gfx::resources::buffer::BufferCreateInfo { usage: vk::BufferUsageFlags::TRANSFER_SRC, access: BufferAccess::CpuToGpu })?;
+    pub fn set_data(&mut self, data: &BufferMemory) -> Result<(), Error> {
+        let mut transfer_buffer = Buffer::new(self.ctx.clone(), 1, data.get_size(), crate::application::gfx::resources::buffer::BufferCreateInfo { usage: vk::BufferUsageFlags::TRANSFER_SRC, access: BufferAccess::CpuToGpu })?;
 
         transfer_buffer.set_data( 0, data)?;
 
