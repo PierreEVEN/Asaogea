@@ -1,11 +1,9 @@
-use std::sync::Weak;
-use crate::application::gfx::device::DeviceCtx;
+use crate::application::gfx::instance::InstanceCtx;
 use anyhow::{anyhow, Error};
-use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtension, KhrWin32SurfaceExtension, SurfaceKHR, HINSTANCE};
 use vulkanalia::vk;
+use vulkanalia::vk::{HasBuilder, KhrSurfaceExtension, KhrWin32SurfaceExtension, SurfaceKHR, HINSTANCE};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
-use crate::application::gfx::instance::InstanceCtx;
 
 pub struct Surface {
     surface: SurfaceKHR,

@@ -85,7 +85,7 @@ impl AppWindow {
     }
 
     pub fn init_swapchain(&mut self, ctx: DeviceCtx) -> Result<(), Error> {
-        *self.data.read().swapchain.write()? = Some(Swapchain::new(self.data.read().engine.get().read().instance().get().device(), self.ctx())?);
+        *self.data.read().swapchain.write()? = Some(Swapchain::new(ctx, self.ctx())?);
         Ok(())
     }
 

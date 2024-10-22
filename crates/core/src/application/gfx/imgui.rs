@@ -63,7 +63,7 @@ pub struct ImGui {
     descriptor_sets: DescriptorSets,
     font_texture: Image,
     sampler: Sampler,
-    ctx: SwapchainCtx
+    ctx: SwapchainCtx,
 }
 
 pub struct ImGuiPushConstants {
@@ -80,9 +80,6 @@ impl ImGui {
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
         let fragment = compiler.compile(&RawShaderDefinition::new("imgui-fragment", "ps_6_0", FRAGMENT.to_string()))?;
 
-        let device = ctx.get().device().get();
-        let device_vulkan = device.device();
-        
         let vertex = ShaderStage::new(ctx.get().device().clone(), &vertex.raw(), ShaderStageInfos {
             descriptor_bindings: vec![],
             push_constant_size: Some(size_of::<ImGuiPushConstants>() as u32),
@@ -277,15 +274,15 @@ impl ImGui {
                 let cmd_list = &**draw_data.CmdLists.offset(n as isize);
 
                 self.mesh.set_data(vertex_start,
-                                                     slice::from_raw_parts(
-                                                         cmd_list.VtxBuffer.Data as *const u8,
-                                                         cmd_list.VtxBuffer.Size as usize * size_of::<ImDrawVert>(),
-                                                     ),
-                                                     index_start,
-                                                     slice::from_raw_parts(
-                                                         cmd_list.IdxBuffer.Data as *const u8,
-                                                         cmd_list.IdxBuffer.Size as usize * size_of::<ImDrawIdx>(),
-                                                     ),
+                                   slice::from_raw_parts(
+                                       cmd_list.VtxBuffer.Data as *const u8,
+                                       cmd_list.VtxBuffer.Size as usize * size_of::<ImDrawVert>(),
+                                   ),
+                                   index_start,
+                                   slice::from_raw_parts(
+                                       cmd_list.IdxBuffer.Data as *const u8,
+                                       cmd_list.IdxBuffer.Size as usize * size_of::<ImDrawIdx>(),
+                                   ),
                 )?;
 
                 vertex_start += cmd_list.VtxBuffer.Size as usize;

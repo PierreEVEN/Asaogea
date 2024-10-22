@@ -10,6 +10,7 @@ use crate::application::gfx::imgui::ImGui;
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::gfx::surface::Surface;
 use crate::application::window::WindowCtx;
+use crate::test_app::test_app::TestApp;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
@@ -32,7 +33,8 @@ pub struct Swapchain {
 
     imgui_temp: Option<ImGui>,
     
-    data: Arc<SwapchainData>
+    data: Arc<SwapchainData>,
+    test_app: Option<TestApp>
 }
 
 pub struct SwapchainCtx(Weak<SwapchainData>);
@@ -75,6 +77,7 @@ impl Swapchain {
                 device: device_ctx,
                 window: window_ctx,
             }),
+            test_app: None,
         };
 
         swapchain.create_or_recreate_swapchain()?;
@@ -343,7 +346,12 @@ impl Swapchain {
         if self.imgui_temp.is_none() {
             self.imgui_temp = Some(ImGui::new(self.ctx())?);
         }
-
+        
+        if self.test_app.is_none() {
+            self.test_app = Some(TestApp::new(self.ctx(), self.present_pass.as_ref().unwrap())?);
+        }
+        self.test_app.as_mut().unwrap().render(&self.command_buffer[image_index])?;
+        
         self.imgui_temp.as_mut().unwrap().render(&self.command_buffer[image_index])?;
 
         unsafe { device_vulkan.cmd_end_render_pass(self.command_buffer[image_index]); }
