@@ -1,23 +1,22 @@
 use crate::application::gfx::resources::buffer::BufferMemory;
-use crate::application::gfx::resources::image::Image;
 use crate::application::gfx::resources::mesh::IndexBufferType;
 use anyhow::{anyhow, Error};
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use gltf::mesh::util::ReadIndices;
 use gltf::{Document, Gltf};
+use image::DynamicImage;
+use image::ImageFormat::{Jpeg, Png};
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use image::DynamicImage;
-use image::ImageFormat::{Jpeg, Png};
 
 pub struct GltfPrimitiveData {
     pub index: Option<BufferMemory<'static>>,
     pub vertex: BufferMemory<'static>,
-    index_type: IndexBufferType,
+    pub index_type: IndexBufferType,
 }
 
 pub struct GltfImporter {
@@ -30,7 +29,8 @@ pub struct GltfImporter {
 
 impl GltfImporter {
     pub fn new(path: PathBuf) -> Result<Self, Error> {
-        let Gltf { document, mut blob } = Gltf::open("resources/models/sample/Lantern.glb")?;
+        let Gltf { document, mut blob } = Gltf::open(&path)
+            .map_err(|e| anyhow!("Failed to open gltf base file {} : {e}", path.display()))?;
         let mut buffers = Vec::new();
         for buffer in document.buffers() {
             let mut data = match buffer.source() {
@@ -53,65 +53,39 @@ impl GltfImporter {
         })
     }
 
-    pub fn load_texture(&mut self, image_index: usize) -> Result<&DynamicImage, Error> {
-        let guess_format = |encoded_image: &[u8]| image::guess_format(encoded_image).map_err(|e| anyhow!("Failed to decode image format : {e}"));
-        let result_image;
-        let document_image = self.document.images().nth(image_index).unwrap();
-        match document_image.source() {
-            gltf::image::Source::Uri { uri, mime_type } if base.is_some() => {
-                match GltfDependencyUri::parse(uri)? {
-                    GltfDependencyUri::Base64(Some(annoying_case), base64) => {
-                        let encoded_image = BASE64_STANDARD.decode(&base64)?;
-                        let encoded_format = match annoying_case {
-                            "image/png" => Png,
-                            "image/jpeg" => Jpeg,
-                            _ => guess_format(&encoded_image)?,
-                        };
-                        let decoded_image = image::load_from_memory_with_format(
-                            &encoded_image,
-                            encoded_format,
-                        )?;
-                        return Ok(decoded_image);
-                    }
-                    _ => {}
-                }
-                let encoded_image = GltfDependencyUri::load_from_uri(base, uri)?;
-                let encoded_format = match mime_type {
-                    Some("image/png") => Png,
-                    Some("image/jpeg") => Jpeg,
-                    Some(_) => guess_format(&encoded_image)?,
-                    None => match uri.rsplit('.').next() {
-                        Some("png") => Png,
-                        Some("jpg") | Some("jpeg") => Jpeg,
-                        _ => match guess_format(&encoded_image) {
-                            Some(format) => format,
-                            None => return Err(anyhow!("unknown format")),
-                        },
-                    },
-                };
-                let decoded_image = image::load_from_memory_with_format(&encoded_image, encoded_format)?;
-                result_image = decoded_image;
+    pub fn num_images(&self) -> usize {
+        self.document.images().len()
+    }
+    
+    pub fn load_image(&mut self, image_index: usize) -> Result<&DynamicImage, Error> {
+        let document_image = self.document.images().nth(image_index).unwrap().source();
+        let image = match document_image {
+            gltf::image::Source::Uri { uri, mime_type } => {
+                self.load_image_from_data(&GltfDependencyUri::load_from_uri(self.path.parent().unwrap(), uri)?, mime_type)?
             }
             gltf::image::Source::View { view, mime_type } => {
-                let parent_buffer_data = &buffer_data[view.buffer().index()].0;
+                let parent_buffer_data = &self.buffers[view.buffer().index()].0;
                 let begin = view.offset();
                 let end = begin + view.length();
                 let encoded_image = &parent_buffer_data[begin..end];
-                let encoded_format = match mime_type {
-                    "image/png" => Png,
-                    "image/jpeg" => Jpeg,
-                    _ => match guess_format(encoded_image) {
-                        Some(format) => format,
-                        None => return Err(anyhow!("unknown format")),
-                    },
-                };
-                let decoded_image =
-                    image::load_from_memory_with_format(encoded_image, encoded_format)?;
-                result_image = decoded_image;
+                self.load_image_from_data(encoded_image, Some(mime_type))?
             }
-            _ => return Err(anyhow!("unknown format")),
-        }
-        Ok(result_image)
+        };
+        self.textures.insert(image_index, image);
+        Ok(self.textures.get(&image_index).unwrap())
+    }
+
+    fn load_image_from_data(&self, data: &[u8], mime_type: Option<&str>) -> Result<DynamicImage, Error> {
+        let encoded_format = if let Some(mime) = mime_type {
+            match mime {
+                "image/png" => Png,
+                "image/jpeg" => Jpeg,
+                f => image::guess_format(data).map_err(|e| anyhow!("Failed to guess format of unhandled mime {f} : {e}"))?,
+            }
+        } else {
+            image::guess_format(data).map_err(|e| anyhow!("Failed to guess format : {e}"))?
+        };
+        Ok(image::load_from_memory_with_format(data, encoded_format)?)
     }
 
     pub fn get_meshes(&mut self) -> Result<&Vec<Vec<GltfPrimitiveData>>, Error> {
@@ -193,7 +167,6 @@ impl<'a> GltfDependencyUri<'a> {
                     Self::load_from_file(env::current_dir()?.join(uri))
                 }
             }
-            _ => Err(anyhow!("Unknown data type")),
         }
     }
 
