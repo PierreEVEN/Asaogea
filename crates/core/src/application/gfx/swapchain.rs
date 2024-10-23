@@ -318,8 +318,6 @@ impl Swapchain {
         let clear_values = &[color_clear_value];
 
         self.command_buffer[image_index].reset()?;
-
-        let inheritance = vk::CommandBufferInheritanceInfo::builder();
         self.command_buffer[image_index].begin()?;
 
         let info = vk::RenderPassBeginInfo::builder()
@@ -342,9 +340,9 @@ impl Swapchain {
 
 
         if self.test_app.is_none() {
-            self.test_app = Some(TestApp::new(self.ctx(), self.present_pass.as_ref().unwrap())?);
+           // self.test_app = Some(TestApp::new(self.ctx(), self.present_pass.as_ref().unwrap())?);
         }
-        self.test_app.as_mut().unwrap().render(&self.command_buffer[image_index])?;
+        //self.test_app.as_mut().unwrap().render(&self.command_buffer[image_index])?;
 
         if self.imgui_temp.is_none() {
             self.imgui_temp = Some(ImGui::new(self.ctx())?);

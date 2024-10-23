@@ -11,10 +11,11 @@ pub struct DynamicMesh {
     ctx: DeviceCtx,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub enum IndexBufferType {
     Uint8 = 1,
     Uint16 = 2,
+    #[default]
     Uint32 = 4,
 }
 

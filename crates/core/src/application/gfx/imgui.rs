@@ -197,9 +197,7 @@ impl ImGui {
             is_depth: false,
         }).unwrap();
 
-        unsafe {
-            font_texture.set_data(&BufferMemory::from_raw(pixels as *const u8, 1, data_size as usize))?;
-        }
+        font_texture.set_data(&BufferMemory::from_raw(pixels as *const u8, 1, data_size as usize))?;
 
         let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.get().device().clone())?.index_type(IndexBufferType::Uint16);
 
@@ -294,14 +292,13 @@ impl ImGui {
             translate_x: f32,
             translate_y: f32,
         }
-        let push_constants = ImGuiPushConstants {
+
+        command_buffer.push_constant(&self.pipeline, &BufferMemory::from_struct(ImGuiPushConstants {
             scale_x,
             scale_y,
             translate_x: -1.0 - draw_data.DisplayPos.x * scale_x,
             translate_y: 1.0 - draw_data.DisplayPos.y * scale_y,
-        };
-
-        command_buffer.push_constant(&self.pipeline, &BufferMemory::from_struct(&push_constants), vk::ShaderStageFlags::VERTEX);
+        }), vk::ShaderStageFlags::VERTEX);
 
         // Will project scissor/clipping rectangles into framebuffer space
         let clip_off = draw_data.DisplayPos;         // (0,0) unless using multi-viewports

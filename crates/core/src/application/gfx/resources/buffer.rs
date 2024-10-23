@@ -1,11 +1,10 @@
+use crate::application::gfx::device::DeviceCtx;
 use anyhow::{anyhow, Error};
-use std::hash::Hash;
 use std::ops::Deref;
-use std::sync::Weak;
+use std::ptr::slice_from_raw_parts;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia_vma::{Alloc, AllocationCreateFlags};
-use crate::application::gfx::device::DeviceCtx;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum BufferAccess
@@ -55,7 +54,7 @@ impl Buffer {
         buffer.set_data(0, memory)?;
         Ok(buffer)
     }
-    
+
     pub fn resize(&mut self, mut new_element_count: usize) -> Result<(), Error> {
         if new_element_count == 0 {
             new_element_count = 1;
@@ -152,39 +151,64 @@ impl Drop for Buffer {
     }
 }
 
-
-pub struct BufferMemory {
-    data: *const u8,
+pub struct BufferMemory<'a> {
+    data: BufferDataType<'a>,
     stride: usize,
     elements: usize,
 }
+enum BufferDataType<'a> {
+    Ptr(&'a [u8]),
+    Raw(Box<dyn BufferDataTrait>),
+}
 
-impl BufferMemory {
+
+impl<'a> BufferMemory<'a> {
     pub fn from_raw(data: *const u8, stride: usize, elements: usize) -> Self {
         assert!(stride >= 1);
         assert!(elements >= 1);
-        Self { data, stride, elements }
+        unsafe { Self { data: BufferDataType::Ptr(slice_from_raw_parts(data, stride * elements).as_ref().unwrap()), stride, elements } }
     }
 
-    pub fn from_slice<T: Sized>(structure: &[T]) -> Self {
-        Self {
-            data: structure.as_ptr() as *const u8,
-            stride: size_of::<T>(),
-            elements: structure.len(),
+    pub fn from_slice<T: Sized>(structure: &'a [T]) -> Self {
+        unsafe {
+            Self {
+                data: BufferDataType::Ptr(slice_from_raw_parts(structure.as_ptr() as *const u8, structure.len() * size_of::<T>()).as_ref().unwrap()),
+                stride: size_of::<T>(),
+                elements: structure.len(),
+            }
         }
     }
-    
-    pub fn from_struct<T: Sized>(structure: &T) -> Self {
+
+    pub fn from_struct_ref<T: Sized>(structure: &'a T) -> Self {
+        let data = unsafe { slice_from_raw_parts(structure as *const T as *const u8, size_of::<T>()).as_ref().unwrap() };
         Self {
-            data: structure as *const T as *const u8,
+            data: BufferDataType::Ptr(data),
             stride: size_of::<T>(),
             elements: 1,
         }
     }
 
-    pub fn from_vec<T: Sized>(structure: &Vec<T>) -> Self {
+    pub fn from_struct<T: 'static + Sized>(structure: T) -> Self {
         Self {
-            data: structure.as_ptr() as *const u8,
+            data: BufferDataType::Raw(Box::new(BufferData { object: vec![structure] })),
+            stride: size_of::<T>(),
+            elements: 1,
+        }
+    }
+
+    pub fn from_vec<T: 'static + Sized>(structure: Vec<T>) -> Self {
+        let elements = structure.len();
+        Self {
+            data: BufferDataType::Raw(Box::new(BufferData { object: structure })),
+            stride: size_of::<T>(),
+            elements,
+        }
+    }
+
+    pub fn from_vec_ref<T: Sized>(structure: &Vec<T>) -> Self {
+        let data = unsafe { slice_from_raw_parts(structure.as_ptr() as *const u8, structure.len() * size_of::<T>()).as_ref().unwrap() };
+        Self {
+            data: BufferDataType::Ptr(data),
             stride: size_of::<T>(),
             elements: structure.len(),
         }
@@ -202,12 +226,31 @@ impl BufferMemory {
         self.stride * self.elements
     }
 
-    pub fn get_ptr(&self, offset: usize) -> *mut u8 {
-        let data = self.data as *mut u8;
-        unsafe { data.offset(offset as isize) }
+    pub fn get_ptr(&self, offset: usize) -> *const u8 {
+        match &self.data {
+            BufferDataType::Ptr(slice) => { unsafe { slice.as_ptr().offset(offset as isize) } }
+            BufferDataType::Raw(raw) => { unsafe { raw.memory().as_ptr().offset(offset as isize) } }
+        }
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { ::std::slice::from_raw_parts(self.data, self.get_size()) }
+        match &self.data {
+            BufferDataType::Ptr(slice) => { unsafe { slice } }
+            BufferDataType::Raw(raw) => { unsafe { raw.memory() } }
+        }
+    }
+}
+
+trait BufferDataTrait {
+    fn memory(&self) -> &[u8];
+}
+
+struct BufferData<T: Sized> {
+    object: Vec<T>,
+}
+
+impl<T: Sized> BufferDataTrait for BufferData<T> {
+    fn memory(&self) -> &[u8] {
+        unsafe { slice_from_raw_parts(self.object.as_ptr() as *const u8, self.object.len() * size_of::<T>()).as_ref().unwrap() }
     }
 }

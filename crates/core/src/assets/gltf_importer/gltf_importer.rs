@@ -1,21 +1,28 @@
-use std::collections::{HashMap, HashSet};
+use crate::application::gfx::resources::buffer::BufferMemory;
+use crate::application::gfx::resources::image::Image;
+use crate::application::gfx::resources::mesh::IndexBufferType;
+use anyhow::{anyhow, Error};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
+use gltf::mesh::util::ReadIndices;
+use gltf::{Document, Gltf};
+use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
-use crate::application::gfx::resources::image::Image;
-use crate::application::gfx::resources::mesh::{DynamicMesh, IndexBufferType};
-use anyhow::{anyhow, Error};
 use std::path::{Path, PathBuf};
-use base64::Engine;
-use base64::prelude::BASE64_STANDARD;
-use glam::Vec3;
-use gltf::{Document, Gltf};
-use gltf::mesh::util::ReadIndices;
-use crate::application::gfx::resources::buffer::BufferMemory;
+use image::DynamicImage;
+use image::ImageFormat::{Jpeg, Png};
+
+pub struct GltfPrimitiveData {
+    pub index: Option<BufferMemory<'static>>,
+    pub vertex: BufferMemory<'static>,
+    index_type: IndexBufferType,
+}
 
 pub struct GltfImporter {
-    textures: HashMap<usize, Image>,
-    meshes: HashMap<usize, DynamicMesh>,
+    textures: HashMap<usize, DynamicImage>,
+    meshes: Vec<Vec<GltfPrimitiveData>>,
     buffers: Vec<gltf::buffer::Data>,
     document: Document,
     path: PathBuf,
@@ -46,17 +53,74 @@ impl GltfImporter {
         })
     }
 
-    pub fn load_texture(&mut self, index: usize) {
-        
+    pub fn load_texture(&mut self, image_index: usize) -> Result<&DynamicImage, Error> {
+        let guess_format = |encoded_image: &[u8]| image::guess_format(encoded_image).map_err(|e| anyhow!("Failed to decode image format : {e}"));
+        let result_image;
+        let document_image = self.document.images().nth(image_index).unwrap();
+        match document_image.source() {
+            gltf::image::Source::Uri { uri, mime_type } if base.is_some() => {
+                match GltfDependencyUri::parse(uri)? {
+                    GltfDependencyUri::Base64(Some(annoying_case), base64) => {
+                        let encoded_image = BASE64_STANDARD.decode(&base64)?;
+                        let encoded_format = match annoying_case {
+                            "image/png" => Png,
+                            "image/jpeg" => Jpeg,
+                            _ => guess_format(&encoded_image)?,
+                        };
+                        let decoded_image = image::load_from_memory_with_format(
+                            &encoded_image,
+                            encoded_format,
+                        )?;
+                        return Ok(decoded_image);
+                    }
+                    _ => {}
+                }
+                let encoded_image = GltfDependencyUri::load_from_uri(base, uri)?;
+                let encoded_format = match mime_type {
+                    Some("image/png") => Png,
+                    Some("image/jpeg") => Jpeg,
+                    Some(_) => guess_format(&encoded_image)?,
+                    None => match uri.rsplit('.').next() {
+                        Some("png") => Png,
+                        Some("jpg") | Some("jpeg") => Jpeg,
+                        _ => match guess_format(&encoded_image) {
+                            Some(format) => format,
+                            None => return Err(anyhow!("unknown format")),
+                        },
+                    },
+                };
+                let decoded_image = image::load_from_memory_with_format(&encoded_image, encoded_format)?;
+                result_image = decoded_image;
+            }
+            gltf::image::Source::View { view, mime_type } => {
+                let parent_buffer_data = &buffer_data[view.buffer().index()].0;
+                let begin = view.offset();
+                let end = begin + view.length();
+                let encoded_image = &parent_buffer_data[begin..end];
+                let encoded_format = match mime_type {
+                    "image/png" => Png,
+                    "image/jpeg" => Jpeg,
+                    _ => match guess_format(encoded_image) {
+                        Some(format) => format,
+                        None => return Err(anyhow!("unknown format")),
+                    },
+                };
+                let decoded_image =
+                    image::load_from_memory_with_format(encoded_image, encoded_format)?;
+                result_image = decoded_image;
+            }
+            _ => return Err(anyhow!("unknown format")),
+        }
+        Ok(result_image)
     }
 
-    pub fn load_mesh(&mut self, index: usize) -> Result<&DynamicMesh, Error> {
-        if let Some(mesh) = self.meshes.get(&index) {
-            return Ok(mesh);
-        }
-        let mut dyn_mesh = DynamicMesh::new(size_of::<Vec3>(), ctx.get().device().clone())?;
+    pub fn get_meshes(&mut self) -> Result<&Vec<Vec<GltfPrimitiveData>>, Error> {
+        if !self.meshes.is_empty() {
+            return Ok(&self.meshes);
+        };
 
         for mesh in self.document.meshes() {
+            let mut primitives = vec![];
             for primitive in mesh.primitives() {
                 let mut vertices = vec![];
 
@@ -66,34 +130,47 @@ impl GltfImporter {
                 for position in positions {
                     vertices.push(position);
                 }
-
                 match reader.read_indices() {
                     None => {
-                        dyn_mesh.set_vertices(0, &BufferMemory::from_vec(&vertices))?;
+                        primitives.push(GltfPrimitiveData {
+                            index: None,
+                            vertex: BufferMemory::from_vec(vertices),
+                            index_type: IndexBufferType::default(),
+                        });
                     }
                     Some(indices) => {
                         match indices {
                             ReadIndices::U8(indices) => {
-                                dyn_mesh = dyn_mesh.index_type(IndexBufferType::Uint8);
                                 let indices: Vec<u8> = indices.collect();
-                                dyn_mesh.set_indexed_vertices(0, &BufferMemory::from_vec(&vertices), 0, &BufferMemory::from_vec(&indices))?;
+                                primitives.push(GltfPrimitiveData {
+                                    index: Some(BufferMemory::from_vec(indices)),
+                                    vertex: BufferMemory::from_vec(vertices),
+                                    index_type: IndexBufferType::Uint8,
+                                });
                             }
                             ReadIndices::U16(indices) => {
-                                dyn_mesh = dyn_mesh.index_type(IndexBufferType::Uint16);
                                 let indices: Vec<u16> = indices.collect();
-                                dyn_mesh.set_indexed_vertices(0, &BufferMemory::from_vec(&vertices), 0, &BufferMemory::from_vec(&indices))?;
+                                primitives.push(GltfPrimitiveData {
+                                    index: Some(BufferMemory::from_vec(indices)),
+                                    vertex: BufferMemory::from_vec(vertices),
+                                    index_type: IndexBufferType::Uint16,
+                                });
                             }
                             ReadIndices::U32(indices) => {
-                                dyn_mesh = dyn_mesh.index_type(IndexBufferType::Uint32);
                                 let indices: Vec<u32> = indices.collect();
-                                dyn_mesh.set_indexed_vertices(0, &BufferMemory::from_vec(&vertices), 0, &BufferMemory::from_vec(&indices))?;
+                                primitives.push(GltfPrimitiveData {
+                                    index: Some(BufferMemory::from_vec(indices)),
+                                    vertex: BufferMemory::from_vec(vertices),
+                                    index_type: IndexBufferType::Uint32,
+                                });
                             }
                         }
                     }
                 }
             }
+            self.meshes.push(primitives);
         }
-        Ok(())
+        Ok(&self.meshes)
     }
 }
 

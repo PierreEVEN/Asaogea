@@ -162,9 +162,11 @@ impl TestApp {
             (ShaderInstanceBinding::SampledImage(*images[0].view()?, *images[0].layout()), 1)
         ])?;
 
+        let temp_mesh = DynamicMesh::new(10, ctx.get().device().clone())?;
 
         Ok(Self {
             pipeline,
+            mesh: temp_mesh,
             ctx,
             descriptor_sets,
             camera,
@@ -333,12 +335,10 @@ impl TestApp {
 
 
         let perspective = Mat4::perspective_rh(PI / 2f32, self.ctx.get().window().get().read().width()? as f32 / self.ctx.get().window().get().read().height()? as f32, 0.001f32, 10000f32);
-        let pc = Pc {
+        command_buffer.push_constant(&self.pipeline, &BufferMemory::from_struct(Pc {
             model: Mat4::IDENTITY,
             camera: perspective.mul_mat4(&self.camera.matrix()),
-        };
-
-        command_buffer.push_constant(&self.pipeline, &BufferMemory::from_struct(&pc), vk::ShaderStageFlags::VERTEX);
+        }), vk::ShaderStageFlags::VERTEX);
 
         command_buffer.set_scissor(Scissors {
             min_x: 0,
