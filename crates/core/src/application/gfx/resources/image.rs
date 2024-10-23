@@ -2,6 +2,7 @@ use crate::application::gfx::command_buffer::CommandBuffer;
 use crate::application::gfx::device::DeviceCtx;
 use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferMemory};
 use anyhow::{anyhow, Error};
+use image::{ColorType, DynamicImage, EncodableLayout};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, FenceCreateInfo, HasBuilder};
 use vulkanalia_vma::Alloc;
@@ -12,9 +13,10 @@ pub struct Image {
     view: Option<vk::ImageView>,
     create_infos: ImageCreateOptions,
     current_layout: vk::ImageLayout,
-    ctx: DeviceCtx
+    ctx: DeviceCtx,
 }
 
+#[derive(Default)]
 pub struct ImageCreateOptions {
     pub image_type: vk::ImageType,
     pub format: vk::Format,
@@ -70,12 +72,52 @@ impl Image {
         })
     }
 
+    pub fn from_dynamic_image(ctx: DeviceCtx, data: &DynamicImage, create_infos: ImageCreateOptions) -> Result<Self, Error> {
+        let format = match data.color() {
+            ColorType::L8 => { vk::Format::R8_UNORM }
+            ColorType::La8 => { vk::Format::R8G8_UNORM }
+            ColorType::Rgb8 => { vk::Format::R8G8B8A8_UNORM }
+            ColorType::Rgba8 => { vk::Format::R8G8B8A8_UNORM }
+            ColorType::L16 => { vk::Format::R16_UNORM }
+            ColorType::La16 => { vk::Format::R16G16_UNORM }
+            ColorType::Rgb16 => { vk::Format::R16G16B16A16_UNORM }
+            ColorType::Rgba16 => { vk::Format::R16G16B16A16_UNORM }
+            ColorType::Rgb32F => { vk::Format::R16G16B16A16_SFLOAT }
+            ColorType::Rgba32F => { vk::Format::R32G32B32A32_SFLOAT }
+            f => { return Err(anyhow!("Unsupported color format {:?}", f)) }
+        };
+        let mut create_infos = create_infos;
+        create_infos.image_type = vk::ImageType::_2D;
+        create_infos.format = format;
+        create_infos.width = data.width();
+        create_infos.height = data.height();
+        create_infos.depth = 1;
+        let mut image = Self::new(ctx, create_infos)?;
+        
+        match data.color() {
+            ColorType::Rgb8 => {
+                image.set_data(&BufferMemory::from_slice(data.clone().into_rgba8().as_bytes()))?;
+            }
+            ColorType::Rgb16  => {
+                image.set_data(&BufferMemory::from_slice(data.clone().into_rgba16().as_bytes()))?;
+            }
+            ColorType::Rgb32F => {
+                image.set_data(&BufferMemory::from_slice(data.clone().into_rgba32f().as_bytes()))?;
+            }
+            _ => {
+                image.set_data(&BufferMemory::from_slice(data.as_bytes()))?;
+            }
+        }
+        
+        Ok(image)
+    }
+
     pub fn set_data(&mut self, data: &BufferMemory) -> Result<(), Error> {
         let mut transfer_buffer = Buffer::new(self.ctx.clone(), 1, data.get_size(), crate::application::gfx::resources::buffer::BufferCreateInfo { usage: vk::BufferUsageFlags::TRANSFER_SRC, access: BufferAccess::CpuToGpu })?;
 
-        transfer_buffer.set_data( 0, data)?;
+        transfer_buffer.set_data(0, data)?;
 
-        let mut command_buffer = CommandBuffer::new(self.ctx.clone())?;
+        let command_buffer = CommandBuffer::new(self.ctx.clone())?;
         command_buffer.begin_one_time()?;
 
         self.set_image_layout(command_buffer.ptr()?, vk::ImageLayout::TRANSFER_DST_OPTIMAL)?;
@@ -188,6 +230,5 @@ impl Drop for Image {
         unsafe { self.ctx.get().allocator().destroy_image(self.image.take().unwrap(), self.allocation.unwrap()) };
 
         unsafe { self.ctx.get().device().destroy_image_view(self.view.take().unwrap(), None) };
-
     }
 }

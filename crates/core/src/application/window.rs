@@ -1,18 +1,16 @@
-use std::sync::{Arc, Weak};
 use std::time::Instant;
 use anyhow::{anyhow, Error};
 use tracing::{error};
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 use types::rwarc::{RwArc, RwArcReadOnly, RwWeakReadOnly};
 use types::rwslock::RwSLock;
 use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::instance::Instance;
 use crate::application::gfx::surface::Surface;
 use crate::application::gfx::swapchain::Swapchain;
 use crate::application::input_manager::InputManager;
-use crate::engine::{Engine, EngineCtx};
+use crate::engine::{EngineCtx};
 use crate::options::{WindowOptions};
 
 pub struct AppWindow {

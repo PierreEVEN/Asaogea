@@ -1,10 +1,8 @@
-use std::slice;
-use std::sync::Weak;
+use crate::application::gfx::device::DeviceCtx;
 use anyhow::{anyhow, Error};
+use std::slice;
 use vulkanalia::vk;
 use vulkanalia::vk::{CopyDescriptorSet, DescriptorImageInfo, DescriptorSetLayout, DeviceV1_0, HasBuilder};
-use crate::application::gfx::descriptor_pool::DescriptorPool;
-use crate::application::gfx::device::DeviceCtx;
 
 pub struct DescriptorSets {
     desc_set: Option<vk::DescriptorSet>,

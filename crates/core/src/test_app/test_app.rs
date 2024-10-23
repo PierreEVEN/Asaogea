@@ -12,11 +12,12 @@ use crate::assets::gltf_importer::gltf_importer::GltfImporter;
 use crate::test_app::camera::Camera;
 use anyhow::Error;
 use glam::{DVec2, Mat4, Vec3};
-use image::{ColorType, GenericImageView};
+use image::{ColorType};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::f32::consts::PI;
 use std::ops::Sub;
 use std::path::PathBuf;
+use tracing::info;
 use vulkanalia::vk;
 use winit::keyboard::{Key, NamedKey, SmolStr};
 
@@ -129,22 +130,17 @@ impl TestApp {
 
         let mut images = vec![];
 
-        let mut image_data = gltf.load_image(0)?;
-        if image_data.color() == ColorType::Rgb8 {
-            let image= image_data.clone().into_rgba8();
+        for i in 0..gltf.num_images() {
+            
+            info!("Load image {} / {}", i + 1, gltf.num_images());
+            
+            images.push(Image::from_dynamic_image(ctx.get().device().clone(), gltf.load_image(i)?, ImageCreateOptions {
+                usage: vk::ImageUsageFlags::SAMPLED,
+                mips_levels: 1,
+                is_depth: false,
+                ..Default::default()
+            })?);
         }
-        let mut image = Image::new(ctx.get().device().clone(), ImageCreateOptions {
-            image_type: vk::ImageType::_2D,
-            format: if image_data.color() == ColorType::Rgb8 { vk::Format::R8G8B8_UNORM } else { vk::Format::R8G8B8A8_UNORM },
-            usage: vk::ImageUsageFlags::SAMPLED,
-            width: image_data.width(),
-            height: image_data.height(),
-            depth: 1,
-            mips_levels: 1,
-            is_depth: false,
-        })?;
-        image.set_data(&BufferMemory::from_slice(image_data.as_bytes()))?;
-        images.push(image);
 
         let sampler = Sampler::new(ctx.get().device().clone())?;
 

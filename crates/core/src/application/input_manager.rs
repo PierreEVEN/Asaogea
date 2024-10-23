@@ -1,4 +1,4 @@
-use glam::{DVec2, Vec2};
+use glam::DVec2;
 use std::collections::HashMap;
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::Key;

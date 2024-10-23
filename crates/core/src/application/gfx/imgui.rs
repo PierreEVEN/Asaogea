@@ -1,4 +1,6 @@
+use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
+use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
 use crate::application::gfx::resources::mesh::{DynamicMesh, IndexBufferType};
@@ -6,18 +8,15 @@ use crate::application::gfx::resources::pipeline::AlphaMode;
 use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
 use crate::application::gfx::resources::sampler::Sampler;
 use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
+use crate::application::gfx::swapchain::SwapchainCtx;
 use anyhow::Error;
 use imgui::sys::{igCreateContext, igEndFrame, igGetDrawData, igGetIO, igGetMainViewport, igGetStyle, igNewFrame, igRender, igShowDemoWindow, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImVec2, ImVec4};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::ffi::c_char;
 use std::ptr::null_mut;
-use std::slice;
 use vulkanalia::vk;
-use vulkanalia::vk::{DeviceV1_0, ImageType};
+use vulkanalia::vk::ImageType;
 use winit::event::MouseButton;
-use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::application::gfx::resources::buffer::BufferMemory;
-use crate::application::gfx::swapchain::{SwapchainCtx, SwapchainData};
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -199,7 +198,7 @@ impl ImGui {
 
         font_texture.set_data(&BufferMemory::from_raw(pixels as *const u8, 1, data_size as usize))?;
 
-        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.get().device().clone())?.index_type(IndexBufferType::Uint16);
+        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.get().device().clone())?;
 
 
         //unsafe { (&mut *io.Fonts).TexID = font_texture.__static_view_handle() as ImTextureID; }

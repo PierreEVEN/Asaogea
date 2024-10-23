@@ -1,13 +1,12 @@
 use crate::application::gfx::device::{DeviceCtx, QueueFamilyIndices};
-use anyhow::{anyhow, Error};
-use std::sync::{Arc, RwLock};
-use vulkanalia::vk;
-use vulkanalia::vk::{CommandBufferBeginInfo, CommandBufferResetFlags, CommandBufferUsageFlags, DeviceV1_0, HasBuilder};
-use crate::application::gfx::render_pass::RenderPass;
-use crate::application::gfx::resources::buffer::{Buffer, BufferMemory};
+use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::DescriptorSets;
 use crate::application::gfx::resources::mesh::DynamicMesh;
 use crate::application::gfx::resources::pipeline::Pipeline;
+use anyhow::{anyhow, Error};
+use std::sync::RwLock;
+use vulkanalia::vk;
+use vulkanalia::vk::{CommandBufferBeginInfo, CommandBufferResetFlags, CommandBufferUsageFlags, DeviceV1_0, HasBuilder};
 
 pub struct CommandPool {
     command_pool: Option<vk::CommandPool>,
@@ -113,13 +112,11 @@ impl CommandBuffer {
 
     pub fn bind_pipeline(&self, program: &Pipeline) {
         unsafe {
-            unsafe {
-                self.ctx.get().device().cmd_bind_pipeline(
-                    self.command_buffer.unwrap(),
-                    vk::PipelineBindPoint::GRAPHICS,
-                    *program.ptr_pipeline(),
-                );
-            }
+            self.ctx.get().device().cmd_bind_pipeline(
+                self.command_buffer.unwrap(),
+                vk::PipelineBindPoint::GRAPHICS,
+                *program.ptr_pipeline(),
+            );
         }
     }
 

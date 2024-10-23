@@ -228,15 +228,15 @@ impl<'a> BufferMemory<'a> {
 
     pub fn get_ptr(&self, offset: usize) -> *const u8 {
         match &self.data {
-            BufferDataType::Ptr(slice) => { unsafe { slice.as_ptr().offset(offset as isize) } }
-            BufferDataType::Raw(raw) => { unsafe { raw.memory().as_ptr().offset(offset as isize) } }
+            BufferDataType::Ptr(slice) => { unsafe { slice.as_ptr().add(offset) } }
+            BufferDataType::Raw(raw) => { unsafe { raw.memory().as_ptr().add(offset) } }
         }
     }
 
     pub fn as_slice(&self) -> &[u8] {
         match &self.data {
-            BufferDataType::Ptr(slice) => { unsafe { slice } }
-            BufferDataType::Raw(raw) => { unsafe { raw.memory() } }
+            BufferDataType::Ptr(slice) => { slice }
+            BufferDataType::Raw(raw) => { raw.memory() }
         }
     }
 }

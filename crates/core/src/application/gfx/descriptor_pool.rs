@@ -1,4 +1,3 @@
-use std::ops::Deref;
 use crate::application::gfx::device::DeviceCtx;
 use anyhow::{anyhow, Error};
 use std::sync::RwLock;

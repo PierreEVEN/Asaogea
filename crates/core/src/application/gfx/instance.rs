@@ -1,18 +1,16 @@
 use std::any::TypeId;
 use std::collections::HashSet;
 use std::ffi::{c_void};
-use std::sync::{Arc, RwLockReadGuard, Weak};
-use anyhow::{anyhow, Error};
+use std::sync::{Arc, Weak};
+use anyhow::{Error};
 use tracing::{debug, error, trace, warn};
 use vulkanalia::{vk, Entry};
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::vk::{DebugUtilsMessengerEXT, DeviceV1_0, EntryV1_0, ExtDebugUtilsExtension, Handle, HasBuilder};
 use types::rwslock::RwSLock;
-use crate::application::gfx::device::{Device, DeviceCtx, DeviceData};
+use crate::application::gfx::device::{Device, DeviceCtx};
 use crate::application::window::{WindowCtx};
-use crate::engine::{EngineCtx, EngineData};
-
-fn test() {}
+use crate::engine::{EngineCtx};
 
 pub(crate) const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
 

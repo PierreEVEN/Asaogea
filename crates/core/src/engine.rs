@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLockReadGuard, Weak};
-use anyhow::{anyhow, Error};
+use anyhow::{Error};
 use tracing::{error, warn};
 use vulkanalia::vk;
 use winit::application::ApplicationHandler;

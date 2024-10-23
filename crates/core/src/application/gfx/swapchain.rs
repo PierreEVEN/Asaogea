@@ -3,13 +3,12 @@ use std::sync::{Arc, Weak};
 use anyhow::{anyhow, Error};
 use tracing::info;
 use vulkanalia::vk;
-use vulkanalia::vk::{CommandBufferResetFlags, DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSwapchainExtension};
+use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSwapchainExtension};
 use types::rwarc::RwArc;
 use crate::application::gfx::command_buffer::{CommandBuffer, Viewport};
-use crate::application::gfx::device::{Device, DeviceCtx, SwapchainSupport};
+use crate::application::gfx::device::{DeviceCtx, SwapchainSupport};
 use crate::application::gfx::imgui::ImGui;
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
-use crate::application::gfx::surface::Surface;
 use crate::application::window::WindowCtx;
 use crate::test_app::test_app::TestApp;
 

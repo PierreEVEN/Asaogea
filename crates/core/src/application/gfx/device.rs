@@ -1,18 +1,14 @@
-use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
-use std::sync::{Arc, RwLockReadGuard, Weak};
+use std::sync::{Arc, Weak};
 use anyhow::{anyhow, Error};
 use tracing::{info, warn};
 use vulkanalia::{vk};
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0, KhrSurfaceExtension, Queue};
-use types::rwarc::RwArc;
-use types::rwslock::RwSLock;
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
-use crate::application::gfx::instance::{GfxConfig, InstanceCtx, InstanceData};
-use crate::application::gfx::surface::Surface;
+use crate::application::gfx::instance::{GfxConfig, InstanceCtx};
 
 pub struct PhysicalDevice {
     physical_device: vk::PhysicalDevice,

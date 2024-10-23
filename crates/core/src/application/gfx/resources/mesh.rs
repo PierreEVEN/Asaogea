@@ -30,11 +30,6 @@ impl DynamicMesh {
         })
     }
 
-    pub fn index_type(mut self, index_type: IndexBufferType) -> Self {
-        self.index_type = index_type;
-        self
-    }
-
     pub fn vk_index_type(&self) -> vk::IndexType {
         match self.index_type {
             IndexBufferType::Uint8 => { vk::IndexType::UINT8_KHR }
@@ -45,8 +40,13 @@ impl DynamicMesh {
 
     pub fn set_indexed_vertices(&mut self, start_vertex: usize, vertex_data: &BufferMemory, start_index: usize, index_data: &BufferMemory) -> Result<(), Error> {
         self.set_vertices(start_vertex, vertex_data)?;
+        match index_data.stride() {
+            1 => { self.index_type = IndexBufferType::Uint8 }
+            2 => { self.index_type = IndexBufferType::Uint16 }
+            4 => { self.index_type = IndexBufferType::Uint32 }
+            s => { return Err(anyhow!("Unsupported index buffer type size : {s}")) }
+        }
         let index_size = self.index_type as usize;
-        assert_eq!(index_data.stride(), index_size);
         if self.index_buffer.is_none() {
             self.index_buffer = Some(Buffer::from_buffer_memory(self.ctx.clone(), index_data, BufferCreateInfo {
                 usage: vk::BufferUsageFlags::INDEX_BUFFER,
