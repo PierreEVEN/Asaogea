@@ -28,7 +28,7 @@ pub struct WindowData {
     swapchain: RwSLock<Option<Swapchain>>,
     surface: Option<Surface>,
     window: Option<Window>,
-    engine: EngineCtx,
+    _engine: EngineCtx,
     input_manager: InputManager,
     pub delta_time: f64,
 }
@@ -72,7 +72,7 @@ impl AppWindow {
                 window: Some(window),
                 surface: Some(surface),
                 swapchain: RwSLock::new(None),
-                engine: ctx,
+                _engine: ctx,
                 input_manager: InputManager::default(),
                 delta_time: 0.0,
             }),

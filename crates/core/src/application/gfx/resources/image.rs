@@ -93,7 +93,7 @@ impl Image {
         create_infos.height = data.height();
         create_infos.depth = 1;
         let mut image = Self::new(ctx, create_infos)?;
-        
+
         match data.color() {
             ColorType::Rgb8 => {
                 image.set_data(&BufferMemory::from_slice(data.clone().into_rgba8().as_bytes()))?;
@@ -108,7 +108,7 @@ impl Image {
                 image.set_data(&BufferMemory::from_slice(data.as_bytes()))?;
             }
         }
-        
+
         Ok(image)
     }
 
@@ -150,15 +150,8 @@ impl Image {
             .command_buffers(&[*command_buffer.ptr()?])
             .build();
 
-        let infos = FenceCreateInfo::builder();
-        let fence = unsafe { self.ctx.get().device().create_fence(&infos, None) }?;
-
-        unsafe { self.ctx.get().device().queue_submit(self.ctx.get().queues().transfer, &[submit_info], fence) }?;
-
-        unsafe { self.ctx.get().device().wait_for_fences(&[fence], true, u64::MAX)?; }
-
-        unsafe { self.ctx.get().device().destroy_fence(fence, None) };
-
+        self.ctx.get().queues().transfer.submit(&[submit_info]);
+        self.ctx.get().queues().transfer.wait();
         Ok(())
     }
 

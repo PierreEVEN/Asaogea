@@ -7,6 +7,7 @@ edition = "2021"
 types = { path = "../types" }
 shaders = { path = "../shaders" }
 macros = { path = "../macros" }
+job-sys = { path = "../job-sys" }
 
 vulkanalia = { version = "0.25.0", features = ["window", "libloading"] }
 vulkanalia-vma = "0.2.0"

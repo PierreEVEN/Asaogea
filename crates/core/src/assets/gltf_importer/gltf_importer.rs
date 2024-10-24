@@ -12,6 +12,7 @@ use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 pub struct GltfPrimitiveData {
     pub index: Option<BufferMemory<'static>>,
@@ -20,7 +21,7 @@ pub struct GltfPrimitiveData {
 }
 
 pub struct GltfImporter {
-    textures: HashMap<usize, DynamicImage>,
+    textures: RwLock<HashMap<usize, DynamicImage>>,
     meshes: Vec<Vec<GltfPrimitiveData>>,
     buffers: Vec<gltf::buffer::Data>,
     document: Document,
@@ -57,7 +58,7 @@ impl GltfImporter {
         self.document.images().len()
     }
     
-    pub fn load_image(&mut self, image_index: usize) -> Result<&DynamicImage, Error> {
+    pub fn load_image(&self, image_index: usize) -> Result<DynamicImage, Error> {
         let document_image = self.document.images().nth(image_index).unwrap().source();
         let image = match document_image {
             gltf::image::Source::Uri { uri, mime_type } => {
@@ -71,8 +72,7 @@ impl GltfImporter {
                 self.load_image_from_data(encoded_image, Some(mime_type))?
             }
         };
-        self.textures.insert(image_index, image);
-        Ok(self.textures.get(&image_index).unwrap())
+        Ok(image)
     }
 
     fn load_image_from_data(&self, data: &[u8], mime_type: Option<&str>) -> Result<DynamicImage, Error> {

@@ -12,7 +12,6 @@ use crate::assets::gltf_importer::gltf_importer::GltfImporter;
 use crate::test_app::camera::Camera;
 use anyhow::Error;
 use glam::{DVec2, Mat4, Vec3};
-use image::{ColorType};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::f32::consts::PI;
 use std::ops::Sub;
@@ -20,6 +19,8 @@ use std::path::PathBuf;
 use tracing::info;
 use vulkanalia::vk;
 use winit::keyboard::{Key, NamedKey, SmolStr};
+use job_sys::{Job, JobSystem};
+use types::rwarc::RwArc;
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -57,7 +58,7 @@ float pow_cord(float val) {
 
 float4 main(VsToFs input) : SV_TARGET {
     float intens = ((pow_cord(input.vtxpos.x) + pow_cord(input.vtxpos.y) + pow_cord(input.vtxpos.z)) * 0.4 + 0.1) * 0.01;
-    return sTexture.Sample(sSampler, input.vtxpos.xy) + float4(float3(intens, intens, intens), 1);
+    return sTexture.Sample(sSampler, input.vtxpos.xy * 0.01) + float4(float3(intens, intens, intens), 1);
 }
 "#;
 
@@ -71,8 +72,8 @@ pub struct TestApp {
     yaw: f32,
     speed: f32,
     last_mouse: DVec2,
-    images: Vec<Image>,
-    sampler: Sampler,
+    _images: Vec<Image>,
+    _sampler: Sampler,
 }
 
 pub struct Pc {
@@ -126,22 +127,36 @@ impl TestApp {
         let mut camera = Camera::default();
         camera.set_position(Vec3::new(0f32, 0f32, 0.5f32));
 
-        let mut gltf = GltfImporter::new(PathBuf::from("resources/models/samples/Sponza/glTF/Sponza.gltf"))?;
+        let gltf = RwArc::new(GltfImporter::new(PathBuf::from("resources/models/samples/Sponza/glTF/Sponza.gltf"))?);
+
+        let mut images_handles = vec![];
 
         let mut images = vec![];
+        {
+            let js = JobSystem::new(JobSystem::num_cpus());
 
-        for i in 0..gltf.num_images() {
-            
-            info!("Load image {} / {}", i + 1, gltf.num_images());
-            
-            images.push(Image::from_dynamic_image(ctx.get().device().clone(), gltf.load_image(i)?, ImageCreateOptions {
-                usage: vk::ImageUsageFlags::SAMPLED,
-                mips_levels: 1,
-                is_depth: false,
-                ..Default::default()
-            })?);
+            let device = ctx.get().device().clone();
+
+            let num_images = gltf.read().num_images();
+            for i in 0..num_images {
+                let ctx = device.clone();
+                let gltf = gltf.clone();
+                images_handles.push((js.push(Job::new(move || {
+                    Image::from_dynamic_image(ctx, &gltf.read().load_image(i)?, ImageCreateOptions {
+                        usage: vk::ImageUsageFlags::SAMPLED,
+                        mips_levels: 1,
+                        is_depth: false,
+                        ..Default::default()
+                    })
+                })), i));
+            }
+
+            for res in images_handles {
+                let image = res.0.wait().unwrap()?;
+                images.push(image);
+                info!("Load image {} / {}", res.1, num_images);
+            }
         }
-
         let sampler = Sampler::new(ctx.get().device().clone())?;
 
         descriptor_sets.update(vec![
@@ -151,7 +166,7 @@ impl TestApp {
 
         let mut meshes = vec![];
 
-        for mesh in gltf.get_meshes()? {
+        for mesh in gltf.write().get_meshes()? {
             for primitive in mesh {
                 let mut temp_mesh = DynamicMesh::new(size_of::<Vec3>(), ctx.get().device().clone())?;
                 if let Some(index_buffer) = &primitive.index {
@@ -171,8 +186,8 @@ impl TestApp {
             yaw: 0.0,
             speed: 2f32,
             last_mouse: Default::default(),
-            images,
-            sampler,
+            _images: images,
+            _sampler: sampler,
         })
     }
 
@@ -191,11 +206,11 @@ impl TestApp {
         self.speed *= inputs.scroll_delta().y as f32 * 0.25f32 + 1f32;
 
         if inputs.is_key_pressed(&Key::Named(NamedKey::PageUp)) {
-            self.speed += 1f32 * ds as f32;
+            self.speed += 50f32 * ds as f32;
         };
 
         if inputs.is_key_pressed(&Key::Named(NamedKey::PageDown)) {
-            self.speed -= 1f32 * ds as f32;
+            self.speed -= 50f32 * ds as f32;
             if self.speed < 0.1 {
                 self.speed = 0.1;
             }

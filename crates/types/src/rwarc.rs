@@ -2,8 +2,13 @@ use crate::rwslock::RwSLock;
 use std::any::type_name;
 use std::sync::{Arc, RwLockReadGuard, RwLockWriteGuard, Weak};
 
-#[derive(Clone)]
 pub struct RwArc<T: Sized>(Arc<RwSLock<T>>);
+
+impl<T: Sized> Clone for RwArc<T> {
+    fn clone(&self) -> Self {
+        RwArc(self.0.clone())
+    }
+}
 
 impl<T: Sized> RwArc<T> {
     pub fn new(data: T) -> Self {

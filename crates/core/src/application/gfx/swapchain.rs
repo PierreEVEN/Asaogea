@@ -361,6 +361,8 @@ impl Swapchain {
             .command_buffers(command_buffers)
             .signal_semaphores(signal_semaphores);
 
+        device.queues().graphic.submit(&[submit_info]);
+        
         unsafe { device_vulkan.queue_submit(device.queues().graphic, &[submit_info], self.in_flight_fences[frame])?; }
 
 
@@ -371,7 +373,7 @@ impl Swapchain {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        let result = unsafe { device_vulkan.queue_present_khr(device.queues().present_queue, &present_info) };
+        let result = unsafe { device_vulkan.queue_present_khr(device.queues().present, &present_info) };
 
         let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
 

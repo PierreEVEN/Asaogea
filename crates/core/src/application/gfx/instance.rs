@@ -22,7 +22,7 @@ pub struct GfxConfig {
 pub struct Instance {
     data: Arc<InstanceData>,
     _entry: Entry,
-    messenger: DebugUtilsMessengerEXT,
+    _messenger: DebugUtilsMessengerEXT,
 }
 
 #[derive(Clone)]
@@ -125,7 +125,7 @@ impl Instance {
                 device: RwSLock::new(None),
             }),
             _entry: entry,
-            messenger,
+            _messenger: messenger,
         };
         Ok(instance)
     }

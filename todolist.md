@@ -19,7 +19,15 @@
 - [x] Image
 - [x] Descriptor pool
 - [x] Descriptor sets
+- [x] Mesh
+- [x] Window events
+
+## Rendering
+
+- [x] Camera
+- [x] Gltf
 
 
-- [ ] Mesh
-- [ ] Window events
+- [ ] Job system
+- [ ] Material (point to an existing pipeline + descriptor sets)
+- [ ] Parallel resource loading

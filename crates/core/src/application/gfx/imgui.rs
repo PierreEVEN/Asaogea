@@ -3,7 +3,7 @@ use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, Ren
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
-use crate::application::gfx::resources::mesh::{DynamicMesh, IndexBufferType};
+use crate::application::gfx::resources::mesh::DynamicMesh;
 use crate::application::gfx::resources::pipeline::AlphaMode;
 use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
 use crate::application::gfx::resources::sampler::Sampler;
@@ -60,11 +60,11 @@ float4 main(VsToFs input) : SV_TARGET {
 pub struct ImGui {
     _compiler: HlslCompiler,
     mesh: DynamicMesh,
-    render_pass: RenderPass,
+    _render_pass: RenderPass,
     pipeline: Pipeline,
     descriptor_sets: DescriptorSets,
-    font_texture: Image,
-    sampler: Sampler,
+    _font_texture: Image,
+    _sampler: Sampler,
     ctx: SwapchainCtx,
 }
 
@@ -214,12 +214,12 @@ impl ImGui {
         Ok(Self {
             _compiler: compiler,
             mesh,
-            render_pass,
+            _render_pass: render_pass,
             pipeline,
             descriptor_sets: desc_set,
-            font_texture,
-            sampler,
-            ctx: ctx,
+            _font_texture: font_texture,
+            _sampler: sampler,
+            ctx,
         })
     }
 

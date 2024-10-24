@@ -201,7 +201,7 @@ impl CommandBuffer {
         }
     }
 
-    pub fn draw_procedural(&self, vertex_count: u32, first_vertex: u32, instance_count: u32, first_instance: u32) {
+    pub fn draw_procedural(&self, _vertex_count: u32, _first_vertex: u32, _instance_count: u32, _first_instance: u32) {
         todo!()
     }
 

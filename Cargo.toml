@@ -10,8 +10,11 @@ members = [
 resolver = "2"
 
 [dependencies]
+core = {path = "crates/core"}
+job-sys = {path = "crates/job-sys"}
+
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 anyhow = "1.0.89"
 
-core = {path = "crates/core"}
+rayon = "1.10.0"

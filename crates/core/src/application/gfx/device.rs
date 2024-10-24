@@ -5,7 +5,7 @@ use std::sync::{Arc, Weak};
 use anyhow::{anyhow, Error};
 use tracing::{info, warn};
 use vulkanalia::{vk};
-use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0, KhrSurfaceExtension, Queue};
+use vulkanalia::vk::{DeviceV1_0, FenceCreateInfo, HasBuilder, InstanceV1_0, KhrSurfaceExtension, SubmitInfo};
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
 use crate::application::gfx::instance::{GfxConfig, InstanceCtx};
@@ -24,7 +24,7 @@ pub struct QueueFamilyIndices {
 }
 
 impl QueueFamilyIndices {
-    fn get(ctx: &InstanceCtx, surface: &vk::SurfaceKHR,physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
+    fn get(ctx: &InstanceCtx, surface: &vk::SurfaceKHR, physical_device: vk::PhysicalDevice) -> Result<Self, Error> {
         let properties = unsafe {
             ctx.get().instance().get_physical_device_queue_family_properties(physical_device)
         };
@@ -150,8 +150,41 @@ pub struct Device {
 
 pub struct DeviceQueues {
     pub graphic: Queue,
-    pub present_queue: Queue,
+    pub present: Queue,
     pub transfer: Queue,
+}
+
+pub struct Queue {
+    queue: vk::Queue,
+    fence: vk::Fence,
+    device: InstanceCtx,
+}
+
+impl Queue {
+    pub fn new(device: InstanceCtx, queue: vk::Queue) -> Self {
+        let infos = FenceCreateInfo::builder();
+        Self {
+            queue,
+            fence: unsafe { device.get().device().get().device.create_fence(&infos, None) }.unwrap(),
+            device,
+        }
+    }
+
+    pub fn submit(&self, infos: &[SubmitInfo]) {
+        self.wait();
+        unsafe { self.device.get().device().get().device.reset_fences(&[self.fence]) }.expect("Failed to reset fence");
+        unsafe { self.device.get().device().get().device.queue_submit(self.queue, infos, self.fence) }.map_err(|e| anyhow!("Failed to submit queue : {e}")).unwrap();
+    }
+
+    pub fn wait(&self) {
+        unsafe { self.device.get().device().get().device.wait_for_fences(&[self.fence], true, u64::MAX).expect("Failed to wait for device queue"); }
+    }
+}
+
+impl Drop for Queue {
+    fn drop(&mut self) {
+        unsafe { self.device.get().device().get().device.destroy_fence(self.fence, None) }
+    }
 }
 
 #[derive(Clone)]
@@ -164,7 +197,7 @@ pub struct DeviceData {
     device: vulkanalia::Device,
     queues: DeviceQueues,
     instance: InstanceCtx,
-    physical_device: PhysicalDevice
+    physical_device: PhysicalDevice,
 }
 
 impl DeviceCtx {
@@ -260,7 +293,7 @@ impl Device {
             descriptor_pool: MaybeUninit::new(descriptor_pool),
             command_pool: MaybeUninit::new(command_pool),
             device,
-            queues: DeviceQueues { graphic: graphics_queue, present_queue, transfer: transfer_queue },
+            queues: DeviceQueues { graphic: Queue::new(ctx.clone(), graphics_queue), present: Queue::new(ctx.clone(), present_queue), transfer: Queue::new(ctx.clone(), transfer_queue) },
             instance: ctx.clone(),
         });
         shared_data.descriptor_pool().init(DeviceCtx(Arc::downgrade(&shared_data)));
@@ -276,7 +309,7 @@ impl Device {
     pub fn ctx(&self) -> DeviceCtx {
         DeviceCtx(Arc::downgrade(&self.data))
     }
-    
+
     pub fn destroy(&mut self) -> Result<(), Error> {
         unsafe {
             self.data.command_pool.assume_init_read();
