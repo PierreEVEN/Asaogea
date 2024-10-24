@@ -1,0 +1,9 @@
+[package]
+name = "job-sys"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lockfree = { version = "0.5.1" }
+anyhow = "1.0.91"
+num_cpus = "1.16.0"
