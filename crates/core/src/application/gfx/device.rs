@@ -3,13 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, Weak};
-use std::thread;
 use anyhow::{anyhow, Error};
-use imgui::sys::igDebugNodeInputTextState;
 use tracing::{info, warn};
-use tracing::dispatcher::get_default;
-use vulkanalia::{vk, VkResult};
-use vulkanalia::vk::{DeviceV1_0, FenceCreateFlags, FenceCreateInfo, Handle, HasBuilder, InstanceV1_0, KhrSurfaceExtension, KhrSwapchainExtension, PresentInfoKHR, Queue, SubmitInfo, SuccessCode};
+use vulkanalia::{vk};
+use vulkanalia::vk::{DeviceV1_0, FenceCreateFlags, Handle, HasBuilder, InstanceV1_0, KhrSurfaceExtension, KhrSwapchainExtension, SuccessCode};
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
 use crate::application::gfx::instance::{GfxConfig, InstanceCtx};
@@ -19,7 +16,7 @@ pub struct PhysicalDevice {
     physical_device: vk::PhysicalDevice,
 }
 
-#[derive(Debug, Hash, Eq, PartialEq)]
+#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
 pub enum QueueFlag {
     Graphic,
     Transfer,
@@ -31,7 +28,6 @@ pub enum QueueFlag {
 pub struct Queues {
     queues: Vec<Arc<SingleQueue>>,
     preferred: HashMap<QueueFlag, Arc<SingleQueue>>,
-    queue_map: HashMap<QueueFlag, Vec<Arc<SingleQueue>>>,
     ctx: RefCell<Option<DeviceCtx>>,
 }
 
@@ -60,93 +56,116 @@ impl Queues {
                 queue: Mutex::new(Default::default()),
                 support_present,
             });
-            if support_present {
-                queue_map.entry(QueueFlag::Present).or_insert(vec![]).push(queue.clone());
-            }
-
-            if prop.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-                queue_map.entry(QueueFlag::Graphic).or_insert(vec![]).push(queue.clone());
-            }
-            if prop.queue_flags.contains(vk::QueueFlags::TRANSFER) {
-                queue_map.entry(QueueFlag::Transfer).or_insert(vec![]).push(queue.clone());
-            }
-            if prop.queue_flags.contains(vk::QueueFlags::COMPUTE) {
-                queue_map.entry(QueueFlag::Compute).or_insert(vec![]).push(queue.clone());
-            }
-
+            queue_map.insert(index, queue.clone());
             queues.push(queue);
         }
 
-        let mut queues_object = Self {
-            preferred: HashMap::new(),
-            queues: queues.clone(),
-            queue_map: Default::default(),
-            ctx: RefCell::default(),
+
+        let stored_queue_map = queue_map.clone();
+
+        // Find fallback queues for transfer and compute
+        let compute_queue = Self::find_best_suited_queue(&queue_map, &vk::QueueFlags::COMPUTE, false, &[]);
+        let mut transfer_queue = Self::find_best_suited_queue(&queue_map, &vk::QueueFlags::TRANSFER, false, &[]);
+
+        // Find graphic queue (ideally with present capability which should always be the case)
+        let graphic_queue = Self::find_best_suited_queue(&queue_map, &vk::QueueFlags::GRAPHICS, false, &[vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER]);
+
+        let present_queue = if let Some(graphic_queue) = graphic_queue {
+            let mut no_graphic_queue_map = queue_map.clone();
+            no_graphic_queue_map.remove(&graphic_queue);
+            Self::find_best_suited_queue(&no_graphic_queue_map, &vk::QueueFlags::empty(), true, &[])
+        } else {
+            Self::find_best_suited_queue(&queue_map, &vk::QueueFlags::empty(), true, &[])
         };
 
-        fn remove_queue(queue: &Arc<SingleQueue>, mut queues: Vec<Arc<SingleQueue>>) -> Vec<Arc<SingleQueue>> {
-            for (i, q) in queues.iter().enumerate() {
-                if q.family_index == queue.family_index {
-                    queues.remove(i);
-                    break;
-                }
-            }
-            queues
+        if let Some(graphic) = graphic_queue { queue_map.remove(&graphic); }
+        if let Some(present) = present_queue { queue_map.remove(&present); }
+
+        // Search dedicated async compute queue
+        let async_compute_queue = Self::find_best_suited_queue(&queue_map, &vk::QueueFlags::COMPUTE, false, &[]);
+        if let Some(compute) = async_compute_queue { queue_map.remove(&compute); }
+
+        // Search dedicated transfer queue
+        if let Some(dedicated_transfer_queue) = Self::find_best_suited_queue(&queue_map, &vk::QueueFlags::TRANSFER, false, &[]) {
+            queue_map.remove(&dedicated_transfer_queue);
+            transfer_queue = Some(dedicated_transfer_queue);
         }
 
-        todo!();
-        // Pick graphic queue
-        if let Some(graphic) = Self::require_family_in_queues(vec![QueueFlag::Graphic, QueueFlag::Present, QueueFlag::Compute], &queues) {
-            queues_object.preferred.insert(QueueFlag::Graphic, graphic.clone());
-        } else if let Some(graphic) = Self::require_family_in_queues(vec![QueueFlag::Graphic, QueueFlag::Present], &queues) {
-            queues_object.preferred.insert(QueueFlag::Graphic, graphic.clone());
-        } else if let Some(graphic) = Self::require_family_in_queues(vec![QueueFlag::Graphic], &queues) {
-            queues_object.preferred.insert(QueueFlag::Graphic, graphic.clone());
-        };
+        let mut preferred = HashMap::new();
+
+        if let Some(graphic) = graphic_queue { preferred.insert(QueueFlag::Graphic, stored_queue_map.get(&graphic).unwrap().clone()); }
+        if let Some(compute) = compute_queue { preferred.insert(QueueFlag::Compute, stored_queue_map.get(&compute).unwrap().clone()); }
+        if let Some(async_compute) = async_compute_queue { preferred.insert(QueueFlag::AsyncCompute, stored_queue_map.get(&async_compute).unwrap().clone()); }
+        if let Some(transfer) = transfer_queue { preferred.insert(QueueFlag::Transfer, stored_queue_map.get(&transfer).unwrap().clone()); }
+        if let Some(present) = present_queue { preferred.insert(QueueFlag::Present, stored_queue_map.get(&present).unwrap().clone()); }
 
 
-        // Pick async compute queue
-        if let Some(graphic) = Self::require_family_in_queues(vec![QueueFlag::Graphic, QueueFlag::Present, QueueFlag::Compute], &queues) {
-            queues_object.preferred.insert(QueueFlag::Graphic, graphic.clone());
-        } else if let Some(graphic) = Self::require_family_in_queues(vec![QueueFlag::Graphic, QueueFlag::Present], &queues) {
-            queues_object.preferred.insert(QueueFlag::Graphic, graphic.clone());
-        } else if let Some(graphic) = Self::require_family_in_queues(vec![QueueFlag::Graphic], &queues) {
-            queues_object.preferred.insert(QueueFlag::Graphic, graphic.clone());
-        };
-
-        queues_object
+        Self {
+            preferred,
+            queues: queues.clone(),
+            ctx: RefCell::default(),
+        }
     }
 
-    pub fn fetch_from_device(&self, ctx: DeviceCtx) {
+    fn find_best_suited_queue(queues: &HashMap<usize, Arc<SingleQueue>>, required: &vk::QueueFlags, require_present: bool, desired: &[vk::QueueFlags]) -> Option<usize> {
+        let mut high_score = 0;
+        let mut best_queue = None;
+        for (index, queue) in queues {
+            if require_present && !queue.support_present { continue; }
+            if !queue.flags.contains(*required) { continue; }
+            let mut score = 0;
+            best_queue = Some(*index);
+            let max_value = desired.len();
+            for (power, flag) in desired.iter().enumerate() {
+                if queue.flags.contains(*flag) {
+                    score += max_value - power;
+                }
+            }
+            if score > high_score {
+                high_score = score;
+                best_queue = Some(*index);
+            }
+        }
+        best_queue
+    }
+
+    pub fn initialize_for_device(&self, ctx: DeviceCtx) {
+        for (_, queue) in &self.preferred {
+            unsafe { *queue.queue.lock().unwrap() = ctx.get().device.get_device_queue(queue.family_index as u32, 0); }
+        }
         self.ctx.replace(Some(ctx));
     }
 
     pub fn submit(&self, family: &QueueFlag, submit_infos: &[vk::SubmitInfo], fence: Option<&Fence>) {
-        let res = self.queue_map.get(family).unwrap_or_else(|| panic!("There is no {:?} queue available on this device !", family));
-        let queue = res[0].queue.lock().unwrap();
-        if let Some(fence) = fence { fence.reset() };
-        unsafe { self.ctx.borrow().as_ref().unwrap().get().device.queue_submit(*queue, submit_infos, if let Some(fence) = fence { fence.fence } else { vk::Fence::null() }).expect("Failed to submit queue"); }
-    }
-
-    pub fn present(&self, present_infos: &vk::PresentInfoKHR) -> Result<vk::SuccessCode, vk::ErrorCode> {
-        let res = self.queue_map.get(&QueueFlag::Present).unwrap_or_else(|| panic!("There is no present queue available on this device !"));
-        let queue = res[0].queue.lock().unwrap();
-        unsafe { Ok(self.ctx.borrow().as_ref().unwrap().get().device.queue_present_khr(*queue, present_infos)?) }
-    }
-
-    pub fn count(&self, family: &QueueFlag) -> usize {
-        match self.queue_map.get(family) {
-            None => { 0 }
-            Some(f) => { f.len() }
+        if let Some(ctx) = self.ctx.borrow().as_ref() {
+            let queue = self.preferred.get(family).unwrap_or_else(|| panic!("There is no {:?} queue available on this device !", family));
+            let queue = queue.queue.lock().unwrap();
+            unsafe {
+                ctx.get().device.queue_submit(*queue, submit_infos, if let Some(fence) = fence {
+                    fence.reset();
+                    fence.fence
+                } else { vk::Fence::null() }).expect("Failed to submit queue");
+            }
+        } else {
+            panic!("Queue have not been initialized for current device");
         }
     }
 
-
-    fn require_family(&self, requirements: Vec<QueueFlag>) -> Option<&Arc<SingleQueue>> {
-        Self::require_family_in_queues(requirements, &self.queues)
+    pub fn present(&self, present_infos: &vk::PresentInfoKHR) -> Result<vk::SuccessCode, vk::ErrorCode> {
+        if let Some(ctx) = self.ctx.borrow().as_ref() {
+            let queue = self.preferred.get(&QueueFlag::Present).unwrap_or_else(|| panic!("There is no present queue available on this device !"));
+            let queue = queue.queue.lock().unwrap();
+            unsafe { ctx.get().device.queue_present_khr(*queue, present_infos) }
+        } else {
+            panic!("Queue have not been initialized for current device");
+        }
     }
 
-    pub fn require_family_in_queues(requirements: Vec<QueueFlag>, queues: &Vec<Arc<SingleQueue>>) -> Option<&Arc<SingleQueue>> {
+    pub fn find_queue(&self, flag: &QueueFlag) -> Option<&Arc<SingleQueue>> {
+        self.preferred.get(&flag)
+    }
+
+    pub fn require_family_in_queues(requirements: Vec<QueueFlag>, queues: &[Arc<SingleQueue>]) -> Option<&Arc<SingleQueue>> {
         let mut flags = vk::QueueFlags::empty();
         let mut require_present = false;
         for requirement in requirements {
@@ -159,18 +178,14 @@ impl Queues {
             }
         }
 
-        for queue in queues {
-            if queue.flags & flags != vk::QueueFlags::empty() && (!require_present || queue.support_present) {
-                return Some(queue);
-            }
-        }
-        None
+        queues.iter().find(|&queue| queue.flags & flags != vk::QueueFlags::empty() && (!require_present || queue.support_present))
     }
 }
 
+#[derive(Default)]
 pub struct Fence {
     fence: vk::Fence,
-    ctx: DeviceCtx,
+    ctx: Option<DeviceCtx>,
 }
 
 impl Fence {
@@ -179,7 +194,7 @@ impl Fence {
         unsafe {
             Self {
                 fence: ctx.get().device.create_fence(&create_infos, None).unwrap(),
-                ctx,
+                ctx: Some(ctx),
             }
         }
     }
@@ -189,7 +204,7 @@ impl Fence {
         unsafe {
             Self {
                 fence: ctx.get().device.create_fence(&create_infos, None).unwrap(),
-                ctx,
+                ctx: Some(ctx),
             }
         }
     }
@@ -199,17 +214,23 @@ impl Fence {
     }
 
     pub fn reset(&self) {
-        unsafe { self.ctx.get().device.reset_fences(&[self.fence]).unwrap() }
+        unsafe { self.ctx.as_ref().unwrap().get().device.reset_fences(&[self.fence]).unwrap() }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.ctx.is_some()
     }
 
     pub fn wait(&self) {
-        unsafe { self.ctx.get().device.wait_for_fences(&[self.fence], true, u64::MAX).unwrap(); }
+        unsafe { self.ctx.as_ref().unwrap().get().device.wait_for_fences(&[self.fence], true, u64::MAX).unwrap(); }
     }
 }
 
 impl Drop for Fence {
     fn drop(&mut self) {
-        unsafe { self.ctx.get().device.destroy_fence(self.fence, None) }
+        if let Some(ctx) = self.ctx.as_ref() {
+            unsafe { ctx.get().device.destroy_fence(self.fence, None) }
+        }
     }
 }
 
@@ -285,15 +306,15 @@ impl PhysicalDevice {
 
         let queues = Queues::search(ctx.clone(), &physical_device, surface);
 
-        if queues.count(&QueueFlag::Graphic) == 0 {
+        if queues.find_queue(&QueueFlag::Graphic).is_none() {
             return Err(anyhow!("There is no available graphic queue on this device"));
         }
 
-        if queues.count(&QueueFlag::Present) == 0 {
+        if queues.find_queue(&QueueFlag::Present).is_none() {
             return Err(anyhow!("There is no available present queue on this device"));
         }
 
-        if queues.count(&QueueFlag::Compute) == 0 {
+        if queues.find_queue(&QueueFlag::Compute).is_none() {
             return Err(anyhow!("There is no available compute queue on this device"));
         }
 
@@ -318,13 +339,13 @@ pub struct Device {
 pub struct DeviceCtx(Weak<DeviceData>);
 
 pub struct DeviceData {
-    allocator: MaybeUninit<vulkanalia_vma::Allocator>,
-    descriptor_pool: MaybeUninit<DescriptorPool>,
-    command_pool: MaybeUninit<CommandPool>,
-    device: vulkanalia::Device,
-    queues: Queues,
     instance: InstanceCtx,
     physical_device: PhysicalDevice,
+    device: vulkanalia::Device,
+    allocator: MaybeUninit<vulkanalia_vma::Allocator>,
+    descriptor_pool: MaybeUninit<DescriptorPool>,
+    command_pool: MaybeUninit<HashMap<QueueFlag, Arc<CommandPool>>>,
+    queues: Queues,
 }
 
 impl DeviceCtx {
@@ -350,12 +371,26 @@ impl DeviceData {
         unsafe { self.descriptor_pool.assume_init_ref() }
     }
 
-    pub fn command_pool(&self) -> &CommandPool {
-        unsafe { self.command_pool.assume_init_ref() }
+    pub fn command_pool(&self, flags: &QueueFlag) -> &CommandPool {
+        unsafe { self.command_pool.assume_init_ref().get(flags).expect("Command pool is not available").as_ref() }
     }
 
     pub fn queues(&self) -> &Queues {
         &self.queues
+    }
+
+    pub fn wait_idle(&self) {
+        let mut unique_queues = HashMap::new();
+        let mut locks = vec![];
+        for (_, queue) in &self.queues.preferred {
+            unique_queues.insert(queue.family_index, queue.clone());
+        }
+        for (_, queue) in &unique_queues {
+            locks.push(queue.queue.lock().unwrap())
+        }
+
+        unsafe { self.device().device_wait_idle().unwrap(); }
+        locks.clear();
     }
 }
 
@@ -372,12 +407,24 @@ impl Device {
         let physical_device = PhysicalDevice::new(&ctx, surface, config)?;
 
         let queues = Queues::search(ctx.clone(), &physical_device.physical_device, surface);
-        let graphic_queue_family = queues.require_family(vec![QueueFlag::Compute, QueueFlag::Graphic, QueueFlag::Present]).expect("failed to find required queue");
+
+        for (flag, queue) in &queues.preferred {
+            info!("{:?} queue : index = {} : {:?}", flag, queue.index(), queue.flags);
+        }
+
+
+        let mut unique_queue_indices =  HashMap::<usize, Vec<QueueFlag>>::new();
+        for (flag, queue) in &queues.preferred {
+            unique_queue_indices.entry(queue.family_index).or_default().push(*flag);
+        }
 
         let queue_priorities = &[1.0];
-        let queue_info = vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(graphic_queue_family.family_index as u32)
-            .queue_priorities(queue_priorities);
+        let mut queue_info = vec![];
+        for (family_index, _) in &unique_queue_indices {
+            queue_info.push(vk::DeviceQueueCreateInfo::builder()
+                .queue_family_index(*family_index as u32)
+                .queue_priorities(queue_priorities));
+        }
 
         let extensions = config.required_extensions
             .iter()
@@ -391,16 +438,13 @@ impl Device {
         } else {
             Vec::new()
         };
-        let queue_infos = &[queue_info];
         let info = vk::DeviceCreateInfo::builder()
-            .queue_create_infos(queue_infos)
+            .queue_create_infos(queue_info.as_slice())
             .enabled_layer_names(layers.as_slice())
             .enabled_extension_names(&extensions)
             .enabled_features(&features);
 
         let device = unsafe { ctx.get().instance().create_device(physical_device.physical_device, &info, None)? };
-
-        let command_pool = CommandPool::new(&device, graphic_queue_family.family_index)?;
 
         let instance_data = ctx.get();
         let infos = vulkanalia_vma::AllocatorOptions::new(instance_data.instance(), &device, *physical_device.ptr());
@@ -411,16 +455,27 @@ impl Device {
             physical_device,
             allocator: MaybeUninit::new(allocator),
             descriptor_pool: MaybeUninit::new(descriptor_pool),
-            command_pool: MaybeUninit::new(command_pool),
+            command_pool: MaybeUninit::new(HashMap::new()),
             queues,
             device,
             instance: ctx.clone(),
         });
         shared_data.descriptor_pool().init(DeviceCtx(Arc::downgrade(&shared_data)));
-        shared_data.command_pool().init(DeviceCtx(Arc::downgrade(&shared_data)));
 
         let device = Self { data: shared_data };
-        device.data.queues.fetch_from_device(device.ctx());
+
+        let mut command_pool_list = vec![];
+        for (index, flags)  in unique_queue_indices {
+            let pool = Arc::new(CommandPool::new(device.ctx(), index)?);
+            unsafe {
+                for flag in flags {
+                    let pool_mut = device.data.command_pool.assume_init_ref() as *const HashMap<QueueFlag, Arc<CommandPool>> as *mut HashMap<QueueFlag, Arc<CommandPool>>;
+                    assert!(pool_mut.as_mut().unwrap().insert(flag, pool.clone()).is_none())
+                }
+            }
+            command_pool_list.push(pool);
+        }
+        device.data.queues.initialize_for_device(device.ctx());
         Ok(device)
     }
 

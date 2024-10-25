@@ -6,7 +6,7 @@ use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSwapchainExtension};
 use types::rwarc::RwArc;
 use crate::application::gfx::command_buffer::{CommandBuffer, Viewport};
-use crate::application::gfx::device::{DeviceCtx, QueueFlag, SwapchainSupport};
+use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag, SwapchainSupport};
 use crate::application::gfx::imgui::ImGui;
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::window::WindowCtx;
@@ -22,8 +22,8 @@ pub struct Swapchain {
 
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
-    in_flight_fences: Vec<vk::Fence>,
-    images_in_flight: RwArc<Vec<vk::Fence>>,
+    in_flight_fences: Vec<Arc<Fence>>,
+    images_in_flight: RwArc<Vec<Arc<Fence>>>,
 
     framebuffers: Vec<vk::Framebuffer>,
     command_buffer: Vec<CommandBuffer>,
@@ -106,9 +106,12 @@ impl Swapchain {
                                         swapchain_support.capabilities.max_image_count);
 
         let mut queue_family_indices = vec![];
-        let image_sharing_mode = if device.physical_device().queue_families_indices().graphics != device.physical_device().queue_families_indices().present {
-            queue_family_indices.push(device.physical_device().queue_families_indices().graphics);
-            queue_family_indices.push(device.physical_device().queue_families_indices().present);
+        let graphic_queue = device.queues().find_queue(&QueueFlag::Graphic).expect("Missing required graphic queue");
+        let present_queue = device.queues().find_queue(&QueueFlag::Present).expect("Missing required present queue");
+
+        let image_sharing_mode = if graphic_queue.index() != present_queue.index() {
+            queue_family_indices.push(graphic_queue.index() as u32);
+            queue_family_indices.push(present_queue.index() as u32);
             vk::SharingMode::CONCURRENT
         } else {
             vk::SharingMode::EXCLUSIVE
@@ -133,12 +136,10 @@ impl Swapchain {
         self.swapchain = Some(swapchain);
 
         let semaphore_info = vk::SemaphoreCreateInfo::builder();
-        let fence_info = vk::FenceCreateInfo::builder()
-            .flags(vk::FenceCreateFlags::SIGNALED);
         for _ in 0..MAX_FRAMES_IN_FLIGHT {
             unsafe { self.image_available_semaphores.push(device_vulkan.create_semaphore(&semaphore_info, None)?); }
             unsafe { self.render_finished_semaphores.push(device_vulkan.create_semaphore(&semaphore_info, None)?); }
-            unsafe { self.in_flight_fences.push(device_vulkan.create_fence(&fence_info, None)?); }
+            self.in_flight_fences.push(Arc::new(Fence::new_signaled(self.ctx().get().device.clone())));
         }
 
         self.present_pass = Some(RenderPass::new(self.data.device.clone(), RenderPassCreateInfos {
@@ -155,11 +156,11 @@ impl Swapchain {
         self.command_buffer = vec![];
 
         for _ in 0..self.swapchain_images.len() {
-            self.command_buffer.push(CommandBuffer::new(self.data.device.clone())?)
+            self.command_buffer.push(CommandBuffer::new(self.data.device.clone(), &QueueFlag::Graphic)?)
         }
         *self.images_in_flight.write() = self.swapchain_images
             .iter()
-            .map(|_| vk::Fence::null())
+            .map(|_| Arc::new(Fence::default()))
             .collect();
 
         info!("Created new swapchain : {:?}", extent);
@@ -207,7 +208,7 @@ impl Swapchain {
     fn destroy_swapchain(&mut self) -> Result<(), Error> {
         let device = self.data.device.get();
 
-        unsafe { device.device().device_wait_idle()?; }
+        device.wait_idle();
 
         unsafe {
             self.framebuffers
@@ -288,7 +289,7 @@ impl Swapchain {
         let device = self.data.device.get();
         let device_vulkan = device.device();
 
-        unsafe { device_vulkan.wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?; }
+        self.in_flight_fences[frame].wait();
 
         let result = unsafe { device_vulkan.acquire_next_image_khr(swapchain, u64::MAX, self.image_available_semaphores[frame], vk::Fence::null()) };
 
@@ -298,11 +299,11 @@ impl Swapchain {
             Err(e) => return Err(anyhow!("Failed to acquire next image : {}", e)),
         };
 
-        if !self.images_in_flight.read()[image_index].is_null() {
-            unsafe { device_vulkan.wait_for_fences(&[self.images_in_flight.read()[image_index]], true, u64::MAX)?; }
+        if self.images_in_flight.read()[image_index].is_valid() {
+            self.images_in_flight.read()[image_index].wait();
         }
 
-        self.images_in_flight.write()[image_index] = self.in_flight_fences[frame];
+        self.images_in_flight.write()[image_index] = self.in_flight_fences[frame].clone();
 
 
         let render_area = vk::Rect2D::builder()
@@ -393,7 +394,7 @@ impl Swapchain {
 impl Drop for Swapchain {
     fn drop(&mut self) {
         let device = self.data.device.get();
-        unsafe { device.device().device_wait_idle().unwrap(); }
+        device.wait_idle();
 
         self.imgui_temp = None;
 
@@ -407,9 +408,6 @@ impl Drop for Swapchain {
             self.image_available_semaphores
                 .iter()
                 .for_each(|s| device.device().destroy_semaphore(*s, None));
-            self.in_flight_fences
-                .iter()
-                .for_each(|f| device.device().destroy_fence(*f, None));
         }
 
         self.present_pass = None;

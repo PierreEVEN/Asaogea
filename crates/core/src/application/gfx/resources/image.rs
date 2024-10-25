@@ -117,7 +117,7 @@ impl Image {
 
         transfer_buffer.set_data(0, data)?;
 
-        let command_buffer = CommandBuffer::new(self.ctx.clone())?;
+        let command_buffer = CommandBuffer::new(self.ctx.clone(), &QueueFlag::Transfer)?;
         command_buffer.begin_one_time()?;
 
         self.set_image_layout(command_buffer.ptr()?, vk::ImageLayout::TRANSFER_DST_OPTIMAL)?;
@@ -143,6 +143,18 @@ impl Image {
                     .build()]);
         }
 
+        command_buffer.end()?;
+        let submit_info = vk::SubmitInfo::builder()
+            .command_buffers(&[*command_buffer.ptr()?])
+            .build();
+
+        let fence = Fence::new(self.ctx.clone());
+        self.ctx.get().queues().submit(&QueueFlag::Transfer, &[submit_info], Some(&fence));
+        fence.wait();
+        
+        let command_buffer = CommandBuffer::new(self.ctx.clone(), &QueueFlag::Graphic)?;
+        command_buffer.begin_one_time()?;
+
         self.set_image_layout(command_buffer.ptr()?, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
         command_buffer.end()?;
 
@@ -150,9 +162,8 @@ impl Image {
             .command_buffers(&[*command_buffer.ptr()?])
             .build();
 
-        
         let fence = Fence::new(self.ctx.clone());
-        self.ctx.get().queues().submit(&QueueFlag::Transfer, &[submit_info], Some(&fence));
+        self.ctx.get().queues().submit(&QueueFlag::Graphic, &[submit_info], Some(&fence));
         fence.wait();
         Ok(())
     }

@@ -143,10 +143,6 @@ impl Deref for Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-
-        //@TODO REMOVE THIS
-        unsafe { self.ctx.get().device().device_wait_idle().unwrap(); }
-
         self.destroy();
     }
 }

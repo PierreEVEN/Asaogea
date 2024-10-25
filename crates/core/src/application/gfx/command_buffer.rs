@@ -1,59 +1,76 @@
-use crate::application::gfx::device::{DeviceCtx};
+use crate::application::gfx::device::{DeviceCtx, QueueFlag};
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::DescriptorSets;
 use crate::application::gfx::resources::mesh::DynamicMesh;
 use crate::application::gfx::resources::pipeline::Pipeline;
 use anyhow::{anyhow, Error};
-use std::sync::RwLock;
+use std::collections::HashMap;
+use std::thread;
+use types::rwslock::RwSLock;
 use vulkanalia::vk;
-use vulkanalia::vk::{CommandBufferBeginInfo, CommandBufferResetFlags, CommandBufferUsageFlags, DeviceV1_0, HasBuilder};
+use vulkanalia::vk::{CommandBufferBeginInfo, CommandBufferResetFlags, CommandBufferUsageFlags, DeviceV1_0, Handle, HasBuilder};
 
 pub struct CommandPool {
-    command_pool: Option<vk::CommandPool>,
-    ctx: RwLock<Option<DeviceCtx>>,
+    command_pool: RwSLock<HashMap<thread::ThreadId, vk::CommandPool>>,
+    ctx: DeviceCtx,
+    queue_family: usize,
 }
 
 impl CommandPool {
-    pub fn new(device: &vulkanalia::Device, graphic_queue_family: usize) -> Result<Self, Error> {
-        let info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER) // Optional.
-            .queue_family_index(graphic_queue_family as u32);
-        let command_pool = unsafe { device.create_command_pool(&info, None) }?;
-
+    pub fn new(ctx: DeviceCtx, queue_family: usize) -> Result<Self, Error> {
         Ok(Self {
-            command_pool: Some(command_pool),
-            ctx: Default::default(),
+            command_pool: RwSLock::new(Default::default()),
+            ctx,
+            queue_family,
         })
     }
 
-    pub fn init(&self, ctx: DeviceCtx) {
-        *self.ctx.write().unwrap() = Some(ctx);
-    }
-
     pub fn allocate(&self, num: u32) -> Result<Vec<vk::CommandBuffer>, Error> {
+        let thread = thread::current().id();
+
+        let mut command_pool = if let Some(command_pool) = self.command_pool.read()?.get(&thread) {
+            *command_pool
+        } else { vk::CommandPool::null() };
+        if command_pool.is_null()
+        {
+            let info = vk::CommandPoolCreateInfo::builder()
+                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER) // Optional.
+                .queue_family_index(self.queue_family as u32);
+            command_pool = unsafe { self.ctx.get().device().create_command_pool(&info, None) }?;
+            self.command_pool.write()?.insert(thread, command_pool);
+        };
+
         let allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(self.command_pool.expect("Command pool is null"))
+            .command_pool(command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(num);
 
-        unsafe { Ok(self.ctx.read().unwrap().as_ref().expect("Command pool have not been initialized").get().device().allocate_command_buffers(&allocate_info)?) }
+        unsafe { Ok(self.ctx.get().device().allocate_command_buffers(&allocate_info)?) }
     }
 
-    pub fn free(&self, command_buffers: &Vec<vk::CommandBuffer>) -> Result<(), Error> {
-        unsafe { self.ctx.read().unwrap().as_ref().unwrap().get().device().free_command_buffers(self.command_pool.expect("Command pool is null"), command_buffers.as_slice()); }
+    pub fn free(&self, command_buffers: &Vec<vk::CommandBuffer>, thread_id: &thread::ThreadId) -> Result<(), Error> {
+        assert_eq!(*thread_id, thread::current().id());
+        let pools = self.command_pool.read()?;
+        let command_pool = pools.get(thread_id).unwrap();
+        unsafe { self.ctx.get().device().free_command_buffers(*command_pool, command_buffers.as_slice()); }
         Ok(())
     }
 }
 
 impl Drop for CommandPool {
     fn drop(&mut self) {
-        unsafe { self.ctx.read().unwrap().as_ref().unwrap().get().device().destroy_command_pool(self.command_pool.take().expect("This command pool is already destroyed"), None); }
+        let pools = self.command_pool.read().unwrap();
+        for (_, pool) in &*pools {
+            unsafe { self.ctx.get().device().destroy_command_pool(*pool, None); }
+        }
     }
 }
 
 pub struct CommandBuffer {
     command_buffer: Option<vk::CommandBuffer>,
     ctx: DeviceCtx,
+    queue_flag: QueueFlag,
+    thread_id: thread::ThreadId,
 }
 
 #[derive(Clone, Copy)]
@@ -75,11 +92,13 @@ pub struct Viewport {
 }
 
 impl CommandBuffer {
-    pub fn new(ctx: DeviceCtx) -> Result<Self, Error> {
-        let command_buffer = ctx.get().command_pool().allocate(1)?;
+    pub fn new(ctx: DeviceCtx, queue_flag: &QueueFlag) -> Result<Self, Error> {
+        let command_buffer = ctx.get().command_pool(queue_flag).allocate(1)?;
         Ok(Self {
             command_buffer: Some(command_buffer[0]),
             ctx,
+            queue_flag: *queue_flag,
+            thread_id: thread::current().id(),
         })
     }
 
@@ -238,7 +257,7 @@ impl CommandBuffer {
 impl Drop for CommandBuffer {
     fn drop(&mut self) {
         if let Some(command_buffer) = self.command_buffer {
-            self.ctx.get().command_pool().free(&vec![command_buffer]).unwrap();
+            self.ctx.get().command_pool(&self.queue_flag).free(&vec![command_buffer], &self.thread_id).unwrap();
         }
         self.command_buffer = None;
     }
