@@ -11,7 +11,6 @@ fn main() -> Result<(), Error> {
 }
 
 fn test() {
-
     let js = JobSystem::new(JobSystem::num_cpus() / 8);
 
     let mut handles = vec![];

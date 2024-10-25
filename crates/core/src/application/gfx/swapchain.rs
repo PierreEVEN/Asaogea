@@ -6,7 +6,7 @@ use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSwapchainExtension};
 use types::rwarc::RwArc;
 use crate::application::gfx::command_buffer::{CommandBuffer, Viewport};
-use crate::application::gfx::device::{DeviceCtx, SwapchainSupport};
+use crate::application::gfx::device::{DeviceCtx, QueueFlag, SwapchainSupport};
 use crate::application::gfx::imgui::ImGui;
 use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::window::WindowCtx;
@@ -289,7 +289,6 @@ impl Swapchain {
         let device_vulkan = device.device();
 
         unsafe { device_vulkan.wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?; }
-        unsafe { device_vulkan.reset_fences(&[self.in_flight_fences[frame]])?; }
 
         let result = unsafe { device_vulkan.acquire_next_image_khr(swapchain, u64::MAX, self.image_available_semaphores[frame], vk::Fence::null()) };
 
@@ -359,21 +358,20 @@ impl Swapchain {
             .wait_semaphores(wait_semaphores)
             .wait_dst_stage_mask(wait_stages)
             .command_buffers(command_buffers)
-            .signal_semaphores(signal_semaphores);
+            .signal_semaphores(signal_semaphores)
+            .build();
 
-        device.queues().graphic.submit(&[submit_info]);
+        device.queues().submit(&QueueFlag::Graphic, &[submit_info], Some(&self.in_flight_fences[frame]));
         
-        unsafe { device_vulkan.queue_submit(device.queues().graphic, &[submit_info], self.in_flight_fences[frame])?; }
-
-
         let swapchains = &[swapchain];
         let image_indices = &[image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(signal_semaphores)
             .swapchains(swapchains)
-            .image_indices(image_indices);
+            .image_indices(image_indices)
+            .build();
 
-        let result = unsafe { device_vulkan.queue_present_khr(device.queues().present, &present_info) };
+        let result = device.queues().present(&present_info);
 
         let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
 

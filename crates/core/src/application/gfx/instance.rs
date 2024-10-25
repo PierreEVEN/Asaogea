@@ -48,7 +48,7 @@ impl InstanceData {
         &self.engine
     }
     pub fn instance(&self) -> &vulkanalia::Instance {
-        &self.instance.as_ref().unwrap()
+        self.instance.as_ref().unwrap()
     }
 }
 
@@ -215,7 +215,7 @@ impl Instance {
             return device.ctx();
         }
         let device = Device::new(self.ctx(),
-                                 ctx.get().read().surface().ptr(),
+                                 &ctx.get().read().surface(),
                                  &GfxConfig {
                                      validation_layers: true,
                                      required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],

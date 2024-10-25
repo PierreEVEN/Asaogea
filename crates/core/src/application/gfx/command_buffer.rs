@@ -1,4 +1,4 @@
-use crate::application::gfx::device::{DeviceCtx, QueueFamilyIndices};
+use crate::application::gfx::device::{DeviceCtx};
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::DescriptorSets;
 use crate::application::gfx::resources::mesh::DynamicMesh;
@@ -14,10 +14,10 @@ pub struct CommandPool {
 }
 
 impl CommandPool {
-    pub fn new(device: &vulkanalia::Device, queue_family_indices: &QueueFamilyIndices) -> Result<Self, Error> {
+    pub fn new(device: &vulkanalia::Device, graphic_queue_family: usize) -> Result<Self, Error> {
         let info = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER) // Optional.
-            .queue_family_index(queue_family_indices.graphics);
+            .queue_family_index(graphic_queue_family as u32);
         let command_pool = unsafe { device.create_command_pool(&info, None) }?;
 
         Ok(Self {

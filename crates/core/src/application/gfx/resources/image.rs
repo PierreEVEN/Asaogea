@@ -1,5 +1,5 @@
 use crate::application::gfx::command_buffer::CommandBuffer;
-use crate::application::gfx::device::DeviceCtx;
+use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag, Queues};
 use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferMemory};
 use anyhow::{anyhow, Error};
 use image::{ColorType, DynamicImage, EncodableLayout};
@@ -150,8 +150,10 @@ impl Image {
             .command_buffers(&[*command_buffer.ptr()?])
             .build();
 
-        self.ctx.get().queues().transfer.submit(&[submit_info]);
-        self.ctx.get().queues().transfer.wait();
+        
+        let fence = Fence::new(self.ctx.clone());
+        self.ctx.get().queues().submit(&QueueFlag::Transfer, &[submit_info], Some(&fence));
+        fence.wait();
         Ok(())
     }
 
