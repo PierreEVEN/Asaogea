@@ -1,10 +1,10 @@
 use crate::application::gfx::command_buffer::CommandBuffer;
-use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag, Queues};
+use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag};
 use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferMemory};
 use anyhow::{anyhow, Error};
 use image::{ColorType, DynamicImage, EncodableLayout};
 use vulkanalia::vk;
-use vulkanalia::vk::{DeviceV1_0, FenceCreateInfo, HasBuilder};
+use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia_vma::Alloc;
 
 pub struct Image {
@@ -144,26 +144,30 @@ impl Image {
         }
 
         command_buffer.end()?;
+        let command_buffers = vec![*command_buffer.ptr()?];
         let submit_info = vk::SubmitInfo::builder()
-            .command_buffers(&[*command_buffer.ptr()?])
+            .command_buffers(command_buffers.as_slice())
             .build();
 
         let fence = Fence::new(self.ctx.clone());
-        self.ctx.get().queues().submit(&QueueFlag::Transfer, &[submit_info], Some(&fence));
+        let submit_infos = vec![submit_info];
+        self.ctx.get().queues().submit(&QueueFlag::Transfer,  submit_infos.as_slice(), Some(&fence));
         fence.wait();
-        
+
         let command_buffer = CommandBuffer::new(self.ctx.clone(), &QueueFlag::Graphic)?;
         command_buffer.begin_one_time()?;
 
         self.set_image_layout(command_buffer.ptr()?, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
         command_buffer.end()?;
 
+        let command_buffers = vec![*command_buffer.ptr()?];
         let submit_info = vk::SubmitInfo::builder()
-            .command_buffers(&[*command_buffer.ptr()?])
+            .command_buffers(command_buffers.as_slice())
             .build();
 
         let fence = Fence::new(self.ctx.clone());
-        self.ctx.get().queues().submit(&QueueFlag::Graphic, &[submit_info], Some(&fence));
+        let submit_infos = vec![submit_info];
+        self.ctx.get().queues().submit(&QueueFlag::Graphic, submit_infos.as_slice(), Some(&fence));
         fence.wait();
         Ok(())
     }

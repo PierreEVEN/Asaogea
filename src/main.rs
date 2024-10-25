@@ -28,3 +28,8 @@ fn test() {
         println!("{}", res.unwrap());
     }
 }
+
+#[no_mangle]
+#[link_section = ".data"]
+pub static NvOptimusEnablement: u32 = 0x00000001;
+

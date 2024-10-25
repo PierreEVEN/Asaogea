@@ -361,8 +361,8 @@ impl Swapchain {
             .command_buffers(command_buffers)
             .signal_semaphores(signal_semaphores)
             .build();
-
-        device.queues().submit(&QueueFlag::Graphic, &[submit_info], Some(&self.in_flight_fences[frame]));
+        let submit_infos = vec![submit_info];
+        device.queues().submit(&QueueFlag::Graphic, submit_infos.as_slice(), Some(&self.in_flight_fences[frame]));
         
         let swapchains = &[swapchain];
         let image_indices = &[image_index as u32];

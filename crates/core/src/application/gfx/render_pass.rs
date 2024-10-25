@@ -62,7 +62,7 @@ impl RenderPass {
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(color_attachment_references.as_slice())
             .build();
-
+        
         // add depth attachment
         match &config.depth_attachment {
             None => {}
@@ -115,9 +115,10 @@ impl RenderPass {
                 .build(),
         ];
 
+        let subpasses = vec![subpass];
         let render_pass_infos = vk::RenderPassCreateInfo::builder()
             .attachments(attachment_descriptions.as_slice())
-            .subpasses(&[subpass])
+            .subpasses(subpasses.as_slice())
             .dependencies(dependencies.as_slice())
             .build();
 

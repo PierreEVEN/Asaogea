@@ -5,7 +5,7 @@ use crate::application::gfx::resources::mesh::DynamicMesh;
 use crate::application::gfx::resources::pipeline::Pipeline;
 use anyhow::{anyhow, Error};
 use std::collections::HashMap;
-use std::thread;
+use std::{thread, time};
 use types::rwslock::RwSLock;
 use vulkanalia::vk;
 use vulkanalia::vk::{CommandBufferBeginInfo, CommandBufferResetFlags, CommandBufferUsageFlags, DeviceV1_0, Handle, HasBuilder};
@@ -154,8 +154,10 @@ impl CommandBuffer {
 
     pub fn draw_mesh(&self, mesh: &DynamicMesh, _instance_count: u32, _first_instance: u32) {
         unsafe {
+            let device_arc = self.ctx.get();
+            let device = device_arc.device();
             let vertex_buffer = if let Some(vertex_buffer) = mesh.vertex_buffer() { vertex_buffer } else { return; };
-            self.ctx.get().device().cmd_bind_vertex_buffers(
+            device.cmd_bind_vertex_buffers(
                 self.command_buffer.unwrap(),
                 0,
                 &[*vertex_buffer.ptr().unwrap()],
@@ -163,24 +165,24 @@ impl CommandBuffer {
 
             match mesh.index_buffer() {
                 None => {
-                    self.ctx.get().device().cmd_draw(self.command_buffer.unwrap(),
-                                                     mesh.index_count() as u32,
-                                                     1,
-                                                     0,
-                                                     0);
+                    device.cmd_draw(self.command_buffer.unwrap(),
+                                    mesh.index_count() as u32,
+                                    1,
+                                    0,
+                                    0);
                 }
                 Some(index_buffer) => {
-                    self.ctx.get().device().cmd_bind_index_buffer(
+                    device.cmd_bind_index_buffer(
                         self.command_buffer.unwrap(),
                         *index_buffer.ptr().unwrap(),
                         0 as vk::DeviceSize,
                         mesh.vk_index_type());
-                    self.ctx.get().device().cmd_draw_indexed(self.command_buffer.unwrap(),
-                                                             mesh.index_count() as u32,
-                                                             1,
-                                                             0,
-                                                             0,
-                                                             0);
+                    device.cmd_draw_indexed(self.command_buffer.unwrap(),
+                                            mesh.index_count() as u32,
+                                            1,
+                                            0,
+                                            0,
+                                            0);
                 }
             }
         }

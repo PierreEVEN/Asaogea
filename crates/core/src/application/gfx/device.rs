@@ -70,10 +70,22 @@ impl Queues {
         // Find graphic queue (ideally with present capability which should always be the case)
         let graphic_queue = Self::find_best_suited_queue(&queue_map, &vk::QueueFlags::GRAPHICS, false, &[vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER]);
 
+        // Find present queue that is not a dedicated compute queue ideally
         let present_queue = if let Some(graphic_queue) = graphic_queue {
             let mut no_graphic_queue_map = queue_map.clone();
             no_graphic_queue_map.remove(&graphic_queue);
-            Self::find_best_suited_queue(&no_graphic_queue_map, &vk::QueueFlags::empty(), true, &[])
+            //if (prefer_dedicated_present_over_compute_queue) { @TODO
+                if let Some(compute_queue) = compute_queue {
+                    no_graphic_queue_map.remove(&compute_queue);
+                }
+            //}
+            if let Some(present_queue) = Self::find_best_suited_queue(&no_graphic_queue_map, &vk::QueueFlags::empty(), true, &[]) {
+                Some(present_queue)
+            } else {
+                let mut no_graphic_queue_map = queue_map.clone();
+                no_graphic_queue_map.remove(&graphic_queue);
+                Self::find_best_suited_queue(&no_graphic_queue_map, &vk::QueueFlags::empty(), true, &[])
+            }
         } else {
             Self::find_best_suited_queue(&queue_map, &vk::QueueFlags::empty(), true, &[])
         };
@@ -214,7 +226,8 @@ impl Fence {
     }
 
     pub fn reset(&self) {
-        unsafe { self.ctx.as_ref().unwrap().get().device.reset_fences(&[self.fence]).unwrap() }
+        let fences = vec![self.fence];
+        unsafe { self.ctx.as_ref().unwrap().get().device.reset_fences(fences.as_slice()).unwrap() }
     }
 
     pub fn is_valid(&self) -> bool {
@@ -222,7 +235,8 @@ impl Fence {
     }
 
     pub fn wait(&self) {
-        unsafe { self.ctx.as_ref().unwrap().get().device.wait_for_fences(&[self.fence], true, u64::MAX).unwrap(); }
+        let fences = vec![self.fence];
+        unsafe { self.ctx.as_ref().unwrap().get().device.wait_for_fences(fences.as_slice(), true, u64::MAX).unwrap(); }
     }
 }
 
@@ -336,7 +350,7 @@ pub struct Device {
 }
 
 #[derive(Clone)]
-pub struct DeviceCtx(Weak<DeviceData>);
+pub struct DeviceCtx(pub Weak<DeviceData>);
 
 pub struct DeviceData {
     instance: InstanceCtx,
@@ -405,6 +419,11 @@ impl Deref for DeviceData {
 impl Device {
     pub fn new(ctx: InstanceCtx, surface: &Surface, config: &GfxConfig) -> Result<Self, Error> {
         let physical_device = PhysicalDevice::new(&ctx, surface, config)?;
+
+
+        let properties = unsafe { ctx.get().instance().get_physical_device_properties(physical_device.physical_device) };
+
+        println!("TEST : {:?}", properties);
 
         let queues = Queues::search(ctx.clone(), &physical_device.physical_device, surface);
 

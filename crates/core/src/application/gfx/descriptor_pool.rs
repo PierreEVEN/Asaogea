@@ -51,15 +51,17 @@ impl DescriptorPool {
     }
 
     pub fn allocate(&self, layout: vk::DescriptorSetLayout) -> Result<vk::DescriptorSet, Error> {
+        let layouts = vec![layout];
         let descriptor_info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(self.pool.unwrap())
-            .set_layouts(&[layout])
+            .set_layouts(layouts.as_slice())
             .build();
         Ok(unsafe { self.device.read().unwrap().as_ref().unwrap().get().device().allocate_descriptor_sets(&descriptor_info)?[0] })
     }
 
     pub fn free(&self, set: vk::DescriptorSet) -> Result<(), Error> {
-        unsafe { self.device.read().unwrap().as_ref().unwrap().get().device().free_descriptor_sets(self.pool.unwrap(), &[set]) }?;
+        let set = vec![set];
+        unsafe { self.device.read().unwrap().as_ref().unwrap().get().device().free_descriptor_sets(self.pool.unwrap(), set.as_slice()) }?;
         Ok(())
     }
 }

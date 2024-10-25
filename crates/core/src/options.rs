@@ -7,7 +7,7 @@ pub struct VulkanOptions {
 impl Default for VulkanOptions {
     fn default() -> Self {
         Self {
-            validation_layers: false,
+            validation_layers: true,
         }
     }
 }
