@@ -3,6 +3,7 @@ use vulkanalia::{vk};
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use crate::application::gfx::device::DeviceCtx;
 
+/*
 #[derive(Clone)]
 pub struct RenderPassAttachment {
     pub clear_value: Option<vk::ClearValue>,
@@ -145,3 +146,5 @@ impl Drop for RenderPass {
         unsafe { self.ctx.get().device().destroy_render_pass(self.render_pass, None); }
     }
 }
+
+ */

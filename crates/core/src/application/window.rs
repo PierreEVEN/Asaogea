@@ -4,6 +4,7 @@ use tracing::{error};
 use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
+use types::resource_handle::{Resource, ResourceHandle};
 use types::rwarc::{RwArc, RwArcReadOnly, RwWeakReadOnly};
 use types::rwslock::RwSLock;
 use crate::application::gfx::device::DeviceCtx;
@@ -14,16 +15,12 @@ use crate::engine::{EngineCtx};
 use crate::options::{WindowOptions};
 
 pub struct AppWindow {
-    data: RwArc<WindowData>,
+    data: Resource<WindowData>,
     minimized: bool,
     last_frame_time: Instant,
 }
-pub struct WindowCtx(RwWeakReadOnly<WindowData>);
-impl WindowCtx {
-    pub fn get(&self) -> RwArcReadOnly<WindowData> {
-        self.0.upgrade()
-    }
-}
+pub type WindowCtx = ResourceHandle<WindowData>;
+
 pub struct WindowData {
     swapchain: RwSLock<Option<Swapchain>>,
     surface: Option<Surface>,
@@ -66,9 +63,9 @@ impl AppWindow {
         attributes.title = options.name.to_string();
 
         let window = event_loop.create_window(attributes)?;
-        let surface = Surface::new(ctx.get().read().instance(), &window)?;
+        let surface = Surface::new(ctx.instance(), &window)?;
         Ok(Self {
-            data: RwArc::new(WindowData {
+            data: Resource::new(WindowData {
                 window: Some(window),
                 surface: Some(surface),
                 swapchain: RwSLock::new(None),
@@ -82,27 +79,25 @@ impl AppWindow {
     }
 
     pub fn init_swapchain(&mut self, ctx: DeviceCtx) -> Result<(), Error> {
-        *self.data.read().swapchain.write()? = Some(Swapchain::new(ctx, self.ctx())?);
+        *self.data.swapchain.write()? = Some(Swapchain::new(ctx, self.ctx())?);
         Ok(())
     }
 
-    pub fn ctx(&self) -> WindowCtx {
-        WindowCtx(self.data.downgrade_read_only())
-    }
+    pub fn ctx(&self) -> ResourceHandle<WindowData> {self.data.handle() }
 
     pub fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) -> Result<(), Error> {
-        self.data.write().input_manager.consume_event(&event);
+        self.data.input_manager.consume_event(&event);
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
                 let elapsed = self.last_frame_time.elapsed().as_secs_f64();
-                self.data.write().delta_time = elapsed;
+                self.data.delta_time = elapsed;
                 self.last_frame_time = Instant::now();
                 if !self.minimized {
-                    self.data.write().input_manager.begin_frame();
-                    let should_recreate = match self.data.read().swapchain.write()?.as_mut().unwrap().render() {
+                    self.data.input_manager.begin_frame();
+                    let should_recreate = match self.data.swapchain.write()?.as_mut().unwrap().render() {
                         Ok(should_recreate) => { should_recreate }
                         Err(err) => {
                             error!("Failed to render frame : {}", err);
@@ -110,7 +105,7 @@ impl AppWindow {
                         }
                     };
                     if should_recreate {
-                        match self.data.read().swapchain.write()?.as_mut().unwrap().create_or_recreate_swapchain() {
+                        match self.data.swapchain.write()?.as_mut().unwrap().create_or_recreate_swapchain() {
                             Ok(_) => {}
                             Err(err) => {
                                 error!("Failed to recreate swapchain : {}", err);
@@ -118,7 +113,7 @@ impl AppWindow {
                         };
                     }
                 }
-                self.data.read().window.as_ref().unwrap().request_redraw();
+                self.data.window.as_ref().unwrap().request_redraw();
             }
             WindowEvent::Resized(size) => {
                 self.minimized = size.width == 0 || size.height == 0;

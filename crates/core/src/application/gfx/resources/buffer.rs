@@ -74,9 +74,9 @@ impl Buffer {
             return Err(anyhow!("buffer is to small : size={}, expected={}", self.size(), start_offset + data.get_size()));
         }
         unsafe {
-            let mapped_memory = self.ctx.get().allocator().map_memory(self.buffer_memory.unwrap())?;
+            let mapped_memory = self.ctx.allocator().map_memory(self.buffer_memory.unwrap())?;
             data.get_ptr(0).copy_to(mapped_memory.add(start_offset), data.get_size());
-            self.ctx.get().allocator().unmap_memory(self.buffer_memory.unwrap());
+            self.ctx.allocator().unmap_memory(self.buffer_memory.unwrap());
         }
         Ok(())
     }
@@ -119,7 +119,7 @@ impl Buffer {
             }
         }
 
-        let (buffer, buffer_memory) = unsafe { self.ctx.get().allocator().create_buffer(buffer_info, &options) }.unwrap();
+        let (buffer, buffer_memory) = unsafe { self.ctx.allocator().create_buffer(buffer_info, &options) }.unwrap();
 
         self.buffer = Some(buffer);
         self.buffer_memory = Some(buffer_memory);
@@ -128,7 +128,7 @@ impl Buffer {
 
     fn destroy(&self) {
         if let Some(buffer) = self.buffer {
-            unsafe { self.ctx.get().allocator().destroy_buffer(buffer, self.buffer_memory.unwrap()) }
+            unsafe { self.ctx.allocator().destroy_buffer(buffer, self.buffer_memory.unwrap()) }
         }
     }
 }

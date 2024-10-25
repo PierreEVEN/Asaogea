@@ -1,13 +1,54 @@
-use std::ops::Deref;
+use crate::application::gfx::command_buffer::{CommandBuffer, Scissors, Viewport};
+use crate::application::gfx::device::{DeviceCtx, QueueFlag};
 use std::sync::Arc;
-use image::Frame;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
-use crate::application::gfx::command_buffer::{CommandBuffer, Scissors, Viewport};
-use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag};
-use crate::application::gfx::resources::image::Image;
+use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
+use crate::application::gfx::device::QueueFlag::Graphic;
+use crate::application::gfx::swapchain::{SwapchainCtx, SwapchainData};
 
-pub struct FrameGraph {}
+pub struct FrameGraph {
+    present_pass: ResourceHandle<RenderPassInstance>,
+    ctx: DeviceCtx,
+}
+
+pub struct SwapchainImage {
+    pub image_view: vk::ImageView,
+    pub wait_semaphore: vk::Semaphore,
+    pub work_finished_fence: vk::Fence,
+}
+
+impl FrameGraph {
+    pub fn new(ctx: DeviceCtx, mut present_pass: ResourceHandleMut<RenderPass>, image_count: usize) -> Self {
+        let present_pass = present_pass.instantiate(image_count);
+        Self {
+            present_pass,
+            ctx,
+        }
+    }
+
+    pub fn resize(&self, width: usize, height: usize, swapchain_images: &Vec<vk::ImageView>) {
+        self.present_pass.resize(width, height, swapchain_images);
+    }
+
+    pub fn draw(&self, image_index: usize, swapchain_image: SwapchainImage) {
+        self.present_pass.draw(image_index, Some(swapchain_image));
+    }
+
+    pub fn present_to_swapchain(&self, image_index: usize, swapchain: &vk::SwapchainKHR) -> bool {
+        let signal_semaphores = &[self.present_pass.framebuffers[image_index].render_finished_semaphore];
+        let swapchains = &[*swapchain];
+        let image_indices = &[image_index as u32];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(signal_semaphores)
+            .swapchains(swapchains)
+            .image_indices(image_indices)
+            .build();
+
+        let result = self.ctx.get().queues().present(&present_info);
+        result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR)
+    }
+}
 
 #[derive(Copy, Clone, Default)]
 pub enum ClearValues {
@@ -18,28 +59,29 @@ pub enum ClearValues {
 }
 
 #[derive(Clone)]
+pub enum AttachmentSource {
+    SwapchainImage(SwapchainCtx),
+    DynamicImage(vk::Format),
+}
+
+#[derive(Clone)]
 pub struct RenderPassAttachment {
     pub clear_value: ClearValues,
-    pub image_format: vk::Format,
+    pub source: AttachmentSource,
 }
 
 #[derive(Clone)]
 pub struct RenderPassCreateInfos {
     pub color_attachments: Vec<RenderPassAttachment>,
     pub depth_attachment: Option<RenderPassAttachment>,
-    pub is_present_pass: bool,
-}
-
-pub enum AttachmentSource {
-    PresentSurface,
-    Images,
 }
 
 pub struct RenderPass {
     dependencies: Vec<Arc<RenderPass>>,
-    attachments: Vec<RenderPassAttachment>,
-    render_pass: vk::RenderPass,
-    sources: AttachmentSource
+    pub create_infos: RenderPassCreateInfos,
+    pub render_pass: vk::RenderPass,
+    ctx: DeviceCtx,
+    instances: Vec<Resource<RenderPassInstance>>
 }
 
 impl RenderPass {
@@ -52,11 +94,20 @@ impl RenderPass {
         // add color color_attachments
         for attachment in &create_infos.color_attachments
         {
+            let (present_pass, format) = match &attachment.source {
+                AttachmentSource::SwapchainImage(swapchain) => {
+                    (true, *swapchain.format())
+                }
+                AttachmentSource::DynamicImage(format) => {
+                    (false, format)
+                }
+            };
+
             let attachment_index: u32 = attachment_descriptions.len() as u32;
 
             attachment_descriptions.push(vk::AttachmentDescription::builder()
-                .format(attachment.image_format)
-                .samples(vk::SampleCountFlags::TYPE_1)
+                .format(*format)
+                .samples(vk::SampleCountFlags::_1)
                 .load_op(match attachment.clear_value {
                     ClearValues::DontClear => { vk::AttachmentLoadOp::DONT_CARE }
                     _ => { vk::AttachmentLoadOp::CLEAR }
@@ -65,7 +116,7 @@ impl RenderPass {
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(if create_infos.is_present_pass { vk::ImageLayout::PRESENT_SRC_KHR } else { vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL })
+                .final_layout(if present_pass { vk::ImageLayout::PRESENT_SRC_KHR } else { vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL })
                 .build());
 
             color_attachment_references.push(vk::AttachmentReference {
@@ -86,10 +137,13 @@ impl RenderPass {
             None => {}
             Some(attachment) => {
                 let attachment_index: u32 = attachment_descriptions.len() as u32;
-
+                let format = match &attachment.source {
+                    AttachmentSource::SwapchainImage(swapchain) => { *swapchain.format() }
+                    AttachmentSource::DynamicImage(format) => { format }
+                };
                 attachment_descriptions.push(vk::AttachmentDescription::builder()
-                    .format(attachment.image_format)
-                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .format(*format)
+                    .samples(vk::SampleCountFlags::_1)
                     .load_op(match attachment.clear_value {
                         ClearValues::DontClear => { vk::AttachmentLoadOp::DONT_CARE }
                         _ => { vk::AttachmentLoadOp::CLEAR }
@@ -143,27 +197,73 @@ impl RenderPass {
 
         Self {
             dependencies: vec![],
-            attachments: vec![],
+            create_infos,
             render_pass,
-            sources: AttachmentSource::PresentSurface,
+            ctx,
+            instances: vec![],
         }
+    }
+
+    pub fn attach(&mut self, dependency: Arc<RenderPass>) {
+        self.dependencies.push(dependency);
+    }
+
+    fn instantiate(&mut self, image_count: usize) -> ResourceHandle<RenderPassInstance> {
+        let mut children = vec![];
+
+        for dependency in &mut self.dependencies {
+            children.push(dependency.instantiate(image_count));
+        }
+
+        let mut attachments = self.create_infos.color_attachments.clone();
+        if let Some(depth) = &self.create_infos.depth_attachment {
+            attachments.push(depth.clone());
+        }
+
+
+        let mut framebuffers = vec![];
+        for _ in 0..image_count {
+            framebuffers.push(Framebuffer::new(self.ctx.clone()));
+        }
+
+        let instance = Resource::new(RenderPassInstance {
+            framebuffers,
+            children,
+            ctx: self.ctx.clone(),
+            attachments,
+            render_pass: self.render_pass,
+            width: 0,
+            height: 0,
+        });
+        let handle = instance.handle();
+        self.instances.push(instance);
+
+        handle
     }
 }
 
 
 pub struct RenderPassInstance {
-    framebuffers: Vec<Framebuffer>,
-    children: Vec<RenderPassInstance>,
+    pub framebuffers: Vec<Framebuffer>,
+    children: Vec<ResourceHandle<RenderPassInstance>>,
     ctx: DeviceCtx,
-    owner: Arc<RenderPass>,
+    attachments: Vec<RenderPassAttachment>,
+    render_pass: vk::RenderPass,
     width: usize,
     height: usize,
 }
 
 impl RenderPassInstance {
-    fn draw(&self, frame_index: usize) {
+    pub fn resize(&self, width: usize, height: usize, swapchain_images: &Vec<vk::ImageView>) {
+        for child in &self.children {
+            child.resize(width, height, swapchain_images);
+        }
+    }
+
+
+    fn draw(&self, frame_index: usize, swapchain_image: Option<SwapchainImage>) {
         for child in &*self.children {
-            child.draw(frame_index);
+            child.draw(frame_index, None);
         }
 
         let device = &self.ctx.get();
@@ -176,7 +276,7 @@ impl RenderPassInstance {
 
 
         let mut clear_values = Vec::new();
-        for attachment in &self.owner.attachments {
+        for attachment in &self.attachments {
             clear_values.push(match attachment.clear_value {
                 ClearValues::DontClear => { vk::ClearValue::default() }
                 ClearValues::Color(color) => {
@@ -199,18 +299,17 @@ impl RenderPassInstance {
 
         // begin pass
         let begin_infos = vk::RenderPassBeginInfo::builder()
-            .render_pass(self.owner.render_pass)
-            .framebuffer(framebuffer.vk_framebuffer)
+            .render_pass(self.render_pass)
+            .framebuffer(framebuffer.vk_framebuffer.unwrap())
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D { width: self.width as u32, height: self.height  as u32},
+                extent: vk::Extent2D { width: self.width as u32, height: self.height as u32 },
             })
             .clear_values(clear_values.as_slice())
             .build();
 
 
-
-        unsafe { device.device().cmd_begin_render_pass(*framebuffer.command_buffer.ptr()?, &begin_infos, vk::SubpassContents::INLINE); }
+        unsafe { device.device().cmd_begin_render_pass(*framebuffer.command_buffer.ptr().unwrap(), &begin_infos, vk::SubpassContents::INLINE); }
 
         framebuffer.command_buffer.set_viewport(&Viewport {
             min_x: 0.0,
@@ -229,27 +328,16 @@ impl RenderPassInstance {
         });
 
         // Draw content
-        /*
-        back.write() {
-            Ok(mut render_callback) => {
-                match render_callback.as_mut() {
-                    None => {}
-                    Some(callback) => {
-                        callback(&(self.pass_command_buffers.clone() as Arc<dyn GfxCommandBuffer>))
-                    }
-                }
-            }
-            Err(_) => { panic!("failed to access render callback") }
-        }*/
+        // todo!();
 
         // End pass
-        unsafe { device.device().cmd_end_render_pass(*framebuffer.command_buffer.ptr()?); }
+        unsafe { device.device().cmd_end_render_pass(*framebuffer.command_buffer.ptr().unwrap()); }
         framebuffer.command_buffer.end().unwrap();
 
         // Submit buffer
         let mut wait_semaphores = Vec::new();
-        if let AttachmentSource::PresentSurface() = self.owner.sources {
-            wait_semaphores.push(self.wait_semaphores.read().unwrap().unwrap());
+        if let Some(swapchain_image) = swapchain_image {
+            wait_semaphores.push(swapchain_image.wait_semaphore);
         }
         for child in &self.children {
             wait_semaphores.push(framebuffer.render_finished_semaphore);
@@ -257,7 +345,7 @@ impl RenderPassInstance {
 
         let wait_stages = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT; wait_semaphores.len()];
 
-        let command_buffers=  vec![ framebuffer.command_buffer];
+        let command_buffers = vec![*framebuffer.command_buffer.ptr().unwrap()];
         let signal_semaphores = vec![framebuffer.render_finished_semaphore];
 
         let submit_infos = vk::SubmitInfo::builder()
@@ -266,15 +354,36 @@ impl RenderPassInstance {
             .command_buffers(command_buffers.as_slice())
             .signal_semaphores(signal_semaphores.as_slice())
             .build();
-        self.ctx.get().queues().submit(QueueFlag::Graphic, submit_infos, Fence::default());
+        let submit_infos = vec![submit_infos];
+        self.ctx.get().queues().submit(&QueueFlag::Graphic, submit_infos.as_slice(), None);
     }
 }
 
+
 pub struct Framebuffer {
-    images: Image,
-    vk_framebuffer: vk::Framebuffer,
+    vk_framebuffer: Option<vk::Framebuffer>,
     command_buffer: CommandBuffer,
-    render_finished_semaphore: vk::Semaphore
+    render_finished_semaphore: vk::Semaphore,
+    ctx: DeviceCtx
 }
 
-impl Framebuffer {}
+impl Framebuffer {
+    pub fn new(ctx: DeviceCtx) -> Self {
+        Self {
+            vk_framebuffer: None,
+            command_buffer: CommandBuffer::new(ctx.clone(), &Graphic).unwrap(),
+            render_finished_semaphore: Default::default(),
+            ctx,
+        }
+    }
+
+    pub fn recreate(&mut self, width: usize, height: usize, render_pass: vk::RenderPass, swapchain_images: &Vec<vk::ImageView>) {
+        let create_info = vk::FramebufferCreateInfo::builder()
+            .render_pass(render_pass)
+            .attachments(swapchain_images)
+            .width(width as u32)
+            .height(height as u32)
+            .layers(1);
+        self.vk_framebuffer = Some(unsafe { self.ctx.get().device().create_framebuffer(&create_info, None) }.unwrap())
+    }
+}

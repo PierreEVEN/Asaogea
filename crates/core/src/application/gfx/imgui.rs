@@ -1,5 +1,4 @@
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::application::gfx::frame_graph::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
@@ -17,6 +16,7 @@ use std::ptr::null_mut;
 use vulkanalia::vk;
 use vulkanalia::vk::ImageType;
 use winit::event::MouseButton;
+use crate::application::gfx::frame_graph::frame_graph::RenderPass;
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -60,7 +60,6 @@ float4 main(VsToFs input) : SV_TARGET {
 pub struct ImGui {
     _compiler: HlslCompiler,
     mesh: DynamicMesh,
-    _render_pass: RenderPass,
     pipeline: Pipeline,
     descriptor_sets: DescriptorSets,
     _font_texture: Image,
@@ -76,13 +75,13 @@ pub struct ImGuiPushConstants {
 }
 
 impl ImGui {
-    pub fn new(ctx: SwapchainCtx) -> Result<Self, Error> {
+    pub fn new(ctx: SwapchainCtx, render_pass: &RenderPass) -> Result<Self, Error> {
         let mut compiler = HlslCompiler::new()?;
 
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
         let fragment = compiler.compile(&RawShaderDefinition::new("imgui-fragment", "ps_6_0", FRAGMENT.to_string()))?;
 
-        let vertex = ShaderStage::new(ctx.get().device().clone(), &vertex.raw(), ShaderStageInfos {
+        let vertex = ShaderStage::new(ctx.device().clone(), &vertex.raw(), ShaderStageInfos {
             descriptor_bindings: vec![],
             push_constant_size: Some(size_of::<ImGuiPushConstants>() as u32),
             stage_input: vec![
@@ -107,7 +106,7 @@ impl ImGui {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: "main".to_string(),
         })?;
-        let fragment = ShaderStage::new(ctx.get().device().clone(), &fragment.raw(),
+        let fragment = ShaderStage::new(ctx.device().clone(), &fragment.raw(),
                                         ShaderStageInfos {
                                             descriptor_bindings: vec![
                                                 ShaderStageBindings {
@@ -124,16 +123,8 @@ impl ImGui {
                                             entry_point: "main".to_string(),
                                         })?;
 
-        let render_pass = RenderPass::new(ctx.get().device().clone(), RenderPassCreateInfos {
-            color_attachments: vec![RenderPassAttachment {
-                clear_value: None,
-                image_format: vk::Format::B8G8R8A8_SRGB,
-            }],
-            depth_attachment: None,
-            is_present_pass: false,
-        })?;
 
-        let pipeline = Pipeline::new(ctx.get().device().clone(), &render_pass, vec![vertex, fragment], &PipelineConfig {
+        let pipeline = Pipeline::new(ctx.device().clone(), &render_pass, vec![vertex, fragment], &PipelineConfig {
             culling: vk::CullModeFlags::NONE,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
@@ -185,7 +176,7 @@ impl ImGui {
         unsafe { ImFontAtlas_GetTexDataAsRGBA32(io.Fonts, &mut pixels, &mut width, &mut height, null_mut()) }
         let data_size = width * height * 4i32;
 
-        let mut font_texture = Image::new(ctx.get().device().clone(), ImageCreateOptions {
+        let mut font_texture = Image::new(ctx.device().clone(), ImageCreateOptions {
             image_type: ImageType::_2D,
             format: vk::Format::R8G8B8A8_UNORM,
             usage: vk::ImageUsageFlags::SAMPLED,
@@ -198,14 +189,13 @@ impl ImGui {
 
         font_texture.set_data(&BufferMemory::from_raw(pixels as *const u8, 1, data_size as usize))?;
 
-        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.get().device().clone())?;
-
+        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.device().clone())?;
 
         //unsafe { (&mut *io.Fonts).TexID = font_texture.__static_view_handle() as ImTextureID; }
 
-        let mut desc_set = DescriptorSets::new(ctx.get().device().clone(), pipeline.descriptor_set_layout())?;
+        let mut desc_set = DescriptorSets::new(ctx.device().clone(), pipeline.descriptor_set_layout())?;
 
-        let sampler = Sampler::new(ctx.get().device().clone())?;
+        let sampler = Sampler::new(ctx.device().clone())?;
 
         desc_set.update(vec![
             (ShaderInstanceBinding::SampledImage(*font_texture.view()?, *font_texture.layout()), 0),
@@ -214,7 +204,6 @@ impl ImGui {
         Ok(Self {
             _compiler: compiler,
             mesh,
-            _render_pass: render_pass,
             pipeline,
             descriptor_sets: desc_set,
             _font_texture: font_texture,
@@ -226,8 +215,7 @@ impl ImGui {
     pub fn render(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
         let io = unsafe { &mut *igGetIO() };
 
-        let window = self.ctx.get().window().get();
-        let window_data = window.read();
+        let window_data = self.ctx.window();
 
         io.DisplaySize = ImVec2 { x: window_data.width()? as f32, y: window_data.height()? as f32 };
         io.DisplayFramebufferScale = ImVec2 { x: 1.0, y: 1.0 };

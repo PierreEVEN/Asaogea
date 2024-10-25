@@ -41,7 +41,7 @@ impl ShaderStage {
         let info = vk::ShaderModuleCreateInfo::builder()
             .code_size(bytecode.code_size())
             .code(bytecode.code());
-        let shader_module = unsafe { ctx.get().device().create_shader_module(&info, None)? };
+        let shader_module = unsafe { ctx.device().create_shader_module(&info, None)? };
         Ok(Self {
             shader_module: Some(shader_module),
             infos,
@@ -69,7 +69,7 @@ impl Deref for ShaderStage {
 impl Drop for ShaderStage {
     fn drop(&mut self) {
         if let Some(shader_module) = &self.shader_module {
-            unsafe { self.ctx.get().device().destroy_shader_module(*shader_module, None); }
+            unsafe { self.ctx.device().destroy_shader_module(*shader_module, None); }
         }
         self.shader_module = None;
     }

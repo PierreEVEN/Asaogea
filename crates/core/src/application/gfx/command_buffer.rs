@@ -36,7 +36,7 @@ impl CommandPool {
             let info = vk::CommandPoolCreateInfo::builder()
                 .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER) // Optional.
                 .queue_family_index(self.queue_family as u32);
-            command_pool = unsafe { self.ctx.get().device().create_command_pool(&info, None) }?;
+            command_pool = unsafe { self.ctx.device().create_command_pool(&info, None) }?;
             self.command_pool.write()?.insert(thread, command_pool);
         };
 
@@ -45,14 +45,14 @@ impl CommandPool {
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(num);
 
-        unsafe { Ok(self.ctx.get().device().allocate_command_buffers(&allocate_info)?) }
+        unsafe { Ok(self.ctx.device().allocate_command_buffers(&allocate_info)?) }
     }
 
     pub fn free(&self, command_buffers: &Vec<vk::CommandBuffer>, thread_id: &thread::ThreadId) -> Result<(), Error> {
         assert_eq!(*thread_id, thread::current().id());
         let pools = self.command_pool.read()?;
         let command_pool = pools.get(thread_id).unwrap();
-        unsafe { self.ctx.get().device().free_command_buffers(*command_pool, command_buffers.as_slice()); }
+        unsafe { self.ctx.device().free_command_buffers(*command_pool, command_buffers.as_slice()); }
         Ok(())
     }
 }
@@ -61,7 +61,7 @@ impl Drop for CommandPool {
     fn drop(&mut self) {
         let pools = self.command_pool.read().unwrap();
         for (_, pool) in &*pools {
-            unsafe { self.ctx.get().device().destroy_command_pool(*pool, None); }
+            unsafe { self.ctx.device().destroy_command_pool(*pool, None); }
         }
     }
 }
@@ -93,7 +93,7 @@ pub struct Viewport {
 
 impl CommandBuffer {
     pub fn new(ctx: DeviceCtx, queue_flag: &QueueFlag) -> Result<Self, Error> {
-        let command_buffer = ctx.get().command_pool(queue_flag).allocate(1)?;
+        let command_buffer = ctx.command_pool(queue_flag).allocate(1)?;
         Ok(Self {
             command_buffer: Some(command_buffer[0]),
             ctx,
@@ -106,22 +106,22 @@ impl CommandBuffer {
         let begin_infos = CommandBufferBeginInfo::builder()
             .flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT)
             .build();
-        unsafe { self.ctx.get().device().begin_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?, &begin_infos)?; }
+        unsafe { self.ctx.device().begin_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?, &begin_infos)?; }
         Ok(())
     }
 
     pub fn begin(&self) -> Result<(), Error> {
         let begin_infos = CommandBufferBeginInfo::builder().build();
-        unsafe { self.ctx.get().device().begin_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?, &begin_infos)?; }
+        unsafe { self.ctx.device().begin_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?, &begin_infos)?; }
         Ok(())
     }
     pub fn reset(&self) -> Result<(), Error> {
-        unsafe { self.ctx.get().device().reset_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?, CommandBufferResetFlags::empty())?; }
+        unsafe { self.ctx.device().reset_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?, CommandBufferResetFlags::empty())?; }
         Ok(())
     }
 
     pub fn end(&self) -> Result<(), Error> {
-        unsafe { self.ctx.get().device().end_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?)?; }
+        unsafe { self.ctx.device().end_command_buffer(self.command_buffer.ok_or(anyhow!("Command buffer is not valid"))?)?; }
         Ok(())
     }
 
@@ -131,7 +131,7 @@ impl CommandBuffer {
 
     pub fn bind_pipeline(&self, program: &Pipeline) {
         unsafe {
-            self.ctx.get().device().cmd_bind_pipeline(
+            self.ctx.device().cmd_bind_pipeline(
                 self.command_buffer.unwrap(),
                 vk::PipelineBindPoint::GRAPHICS,
                 *program.ptr_pipeline(),
@@ -141,7 +141,7 @@ impl CommandBuffer {
 
     pub fn bind_descriptors(&self, pipeline: &Pipeline, descriptors: &DescriptorSets) {
         unsafe {
-            self.ctx.get().device().cmd_bind_descriptor_sets(
+            self.ctx.device().cmd_bind_descriptor_sets(
                 self.command_buffer.unwrap(),
                 vk::PipelineBindPoint::GRAPHICS,
                 *pipeline.ptr_pipeline_layout(),
@@ -154,8 +154,7 @@ impl CommandBuffer {
 
     pub fn draw_mesh(&self, mesh: &DynamicMesh, _instance_count: u32, _first_instance: u32) {
         unsafe {
-            let device_arc = self.ctx.get();
-            let device = device_arc.device();
+            let device = self.ctx.device();
             let vertex_buffer = if let Some(vertex_buffer) = mesh.vertex_buffer() { vertex_buffer } else { return; };
             device.cmd_bind_vertex_buffers(
                 self.command_buffer.unwrap(),
@@ -191,7 +190,7 @@ impl CommandBuffer {
     pub fn draw_mesh_advanced(&self, mesh: &DynamicMesh, first_index: u32, vertex_offset: u32, index_count: u32, instance_count: u32, first_instance: u32) {
         unsafe {
             let vertex_buffer = if let Some(vertex_buffer) = mesh.vertex_buffer() { vertex_buffer } else { return; };
-            self.ctx.get().device().cmd_bind_vertex_buffers(
+            self.ctx.device().cmd_bind_vertex_buffers(
                 self.command_buffer.unwrap(),
                 0,
                 &[*vertex_buffer.ptr().unwrap()],
@@ -199,19 +198,19 @@ impl CommandBuffer {
 
             match mesh.index_buffer() {
                 None => {
-                    self.ctx.get().device().cmd_draw(self.command_buffer.unwrap(),
+                    self.ctx.device().cmd_draw(self.command_buffer.unwrap(),
                                                      index_count,
                                                      instance_count,
                                                      vertex_offset,
                                                      first_instance);
                 }
                 Some(index_buffer) => {
-                    self.ctx.get().device().cmd_bind_index_buffer(
+                    self.ctx.device().cmd_bind_index_buffer(
                         self.command_buffer.unwrap(),
                         *index_buffer.ptr().unwrap(),
                         0 as vk::DeviceSize,
                         mesh.vk_index_type());
-                    self.ctx.get().device().cmd_draw_indexed(self.command_buffer.unwrap(),
+                    self.ctx.device().cmd_draw_indexed(self.command_buffer.unwrap(),
                                                              index_count,
                                                              instance_count,
                                                              first_index,
@@ -228,7 +227,7 @@ impl CommandBuffer {
 
     pub fn set_viewport(&self, viewport: &Viewport) {
         unsafe {
-            self.ctx.get().device().cmd_set_viewport(self.command_buffer.unwrap(), 0, &[vk::Viewport::builder()
+            self.ctx.device().cmd_set_viewport(self.command_buffer.unwrap(), 0, &[vk::Viewport::builder()
                 .x(viewport.min_x)
                 .y(viewport.min_y)
                 .width(viewport.width)
@@ -242,7 +241,7 @@ impl CommandBuffer {
 
     pub fn set_scissor(&self, scissors: Scissors) {
         unsafe {
-            self.ctx.get().device().cmd_set_scissor(self.command_buffer.unwrap(), 0, &[vk::Rect2D {
+            self.ctx.device().cmd_set_scissor(self.command_buffer.unwrap(), 0, &[vk::Rect2D {
                 extent: vk::Extent2D { width: scissors.width, height: scissors.height },
                 offset: vk::Offset2D { x: scissors.min_x, y: scissors.min_y },
             }])
@@ -251,7 +250,7 @@ impl CommandBuffer {
 
     pub fn push_constant(&self, pipeline: &Pipeline, data: &BufferMemory, stage: vk::ShaderStageFlags) {
         unsafe {
-            self.ctx.get().device().cmd_push_constants(self.command_buffer.unwrap(), *pipeline.ptr_pipeline_layout(), stage, 0, data.as_slice())
+            self.ctx.device().cmd_push_constants(self.command_buffer.unwrap(), *pipeline.ptr_pipeline_layout(), stage, 0, data.as_slice())
         }
     }
 }
@@ -259,7 +258,7 @@ impl CommandBuffer {
 impl Drop for CommandBuffer {
     fn drop(&mut self) {
         if let Some(command_buffer) = self.command_buffer {
-            self.ctx.get().command_pool(&self.queue_flag).free(&vec![command_buffer], &self.thread_id).unwrap();
+            self.ctx.command_pool(&self.queue_flag).free(&vec![command_buffer], &self.thread_id).unwrap();
         }
         self.command_buffer = None;
     }

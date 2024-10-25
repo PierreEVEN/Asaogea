@@ -1,5 +1,4 @@
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::application::gfx::frame_graph::render_pass::RenderPass;
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
@@ -21,6 +20,7 @@ use vulkanalia::vk;
 use winit::keyboard::{Key, NamedKey, SmolStr};
 use job_sys::{Job, JobSystem};
 use types::rwarc::RwArc;
+use crate::application::gfx::frame_graph::frame_graph::RenderPass;
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -197,10 +197,10 @@ impl TestApp {
     pub fn render(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
         command_buffer.bind_pipeline(&self.pipeline);
 
-        let window = self.ctx.get().window().get();
-        let w = window.read();
+        let win = self.ctx.get();
+        let w = win.window();
         let inputs = w.input_manager();
-        let ds = self.ctx.get().window().get().read().delta_time;
+        let ds = self.ctx.get().window().delta_time;
 
         let speed = self.speed;
 
@@ -250,7 +250,7 @@ impl TestApp {
         self.last_mouse = *inputs.mouse_position();
 
 
-        let perspective = Mat4::perspective_rh(PI / 2f32, self.ctx.get().window().get().read().width()? as f32 / self.ctx.get().window().get().read().height()? as f32, 0.001f32, 10000f32);
+        let perspective = Mat4::perspective_rh(PI / 2f32, self.ctx.get().window().width()? as f32 / self.ctx.get().window().height()? as f32, 0.001f32, 10000f32);
         command_buffer.push_constant(&self.pipeline, &BufferMemory::from_struct(Pc {
             model: Mat4::IDENTITY,
             camera: perspective.mul_mat4(&self.camera.matrix()),
@@ -259,8 +259,8 @@ impl TestApp {
         command_buffer.set_scissor(Scissors {
             min_x: 0,
             min_y: 0,
-            width: self.ctx.get().window().get().read().width()?,
-            height: self.ctx.get().window().get().read().height()?,
+            width: self.ctx.get().window().width()?,
+            height: self.ctx.get().window().height()?,
         });
 
         for (i, mesh) in self.meshes.iter().enumerate() {

@@ -1,9 +1,9 @@
 use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::frame_graph::render_pass::RenderPass;
 use crate::application::gfx::resources::shader_module::ShaderStage;
 use anyhow::Error;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, ShaderStageFlags};
+use crate::application::gfx::frame_graph::frame_graph::RenderPass;
 
 pub struct Pipeline {
     pipeline_layout: vk::PipelineLayout,
@@ -58,14 +58,14 @@ impl Pipeline {
         let ci_descriptor_set_layout = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(bindings.as_slice())
             .build();
-        let descriptor_set_layout = unsafe {ctx.get().device().create_descriptor_set_layout(&ci_descriptor_set_layout, None)}?;
+        let descriptor_set_layout = unsafe {ctx.device().create_descriptor_set_layout(&ci_descriptor_set_layout, None)}?;
 
         let set_layouts = &[descriptor_set_layout];
         let layout_info = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(set_layouts)
             .push_constant_ranges(push_constant_ranges.as_slice());
 
-        let pipeline_layout = unsafe { ctx.get().device().create_pipeline_layout(&layout_info, None) }?;
+        let pipeline_layout = unsafe { ctx.device().create_pipeline_layout(&layout_info, None) }?;
 
         let mut vertex_attribute_description = Vec::<vk::VertexInputAttributeDescription>::new();
 
@@ -100,7 +100,7 @@ impl Pipeline {
 
         let mut color_blend_attachment = Vec::<vk::PipelineColorBlendAttachmentState>::new();
 
-        for _ in 0..render_pass.config().color_attachments.len()
+        for _ in 0..render_pass.create_infos.color_attachments.len()
         {
             color_blend_attachment.push(vk::PipelineColorBlendAttachmentState::builder()
                 .blend_enable(config.alpha_mode != AlphaMode::Opaque)
@@ -216,11 +216,11 @@ impl Pipeline {
             .color_blend_state(&color_blend_state)
             .dynamic_state(&dynamic_states)
             .layout(pipeline_layout)
-            .render_pass(*render_pass.ptr())
+            .render_pass(render_pass.render_pass)
             .subpass(0)
             .build();
 
-        let pipeline = unsafe { ctx.get().device().create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) }?.0;
+        let pipeline = unsafe { ctx.device().create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) }?.0;
         
         Ok(Self {
             pipeline_layout,
@@ -245,9 +245,8 @@ impl Pipeline {
 
 impl Drop for Pipeline {
     fn drop(&mut self) {
-        let device = self.ctx.get();
-        unsafe { device.device().destroy_pipeline_layout(self.pipeline_layout, None); }
-        unsafe { device.device().destroy_descriptor_set_layout(self.descriptor_set_layout, None); }
-        unsafe { device.device().destroy_pipeline(self.pipeline, None); }
+        unsafe { self.ctx.device().destroy_pipeline_layout(self.pipeline_layout, None); }
+        unsafe { self.ctx.device().destroy_descriptor_set_layout(self.descriptor_set_layout, None); }
+        unsafe { self.ctx.device().destroy_pipeline(self.pipeline, None); }
     }
 }

@@ -13,7 +13,7 @@ impl Sampler {
         let create_infos = vk::SamplerCreateInfo::builder()
             .build();
 
-        let sampler = unsafe { ctx.get().device().create_sampler(&create_infos, None) }?;
+        let sampler = unsafe { ctx.device().create_sampler(&create_infos, None) }?;
 
         Ok(Self { sampler, ctx })
     }
@@ -25,6 +25,6 @@ impl Sampler {
 
 impl Drop for Sampler {
     fn drop(&mut self) {
-        unsafe { self.ctx.get().device().destroy_sampler(self.sampler, None); }
+        unsafe { self.ctx.device().destroy_sampler(self.sampler, None); }
     }
 }

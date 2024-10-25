@@ -1,3 +1,4 @@
 pub mod rwarc;
 pub mod rwslock;
-mod error;
+pub mod error;
+pub mod resource_handle;

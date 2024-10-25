@@ -197,8 +197,8 @@ impl Instance {
         let string_name = format!("{}", name);
 
         unsafe {
-            let instance = ctx.get().get();
-            instance.instance().set_debug_utils_object_name_ext(ctx.get().device().handle(), &
+            let instance = ctx.get();
+            instance.instance().set_debug_utils_object_name_ext(ctx.device().handle(), &
                 vk::DebugUtilsObjectNameInfoEXT::builder()
                     .object_type(object_type)
                     .object_handle(handle)
@@ -215,7 +215,7 @@ impl Instance {
             return device.ctx();
         }
         let device = Device::new(self.ctx(),
-                                 ctx.get().read().surface(),
+                                 ctx.surface(),
                                  &GfxConfig {
                                      validation_layers: true,
                                      required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],

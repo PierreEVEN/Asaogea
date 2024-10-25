@@ -2,13 +2,15 @@ use std::cell::{Ref, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::mem::MaybeUninit;
 use std::ops::Deref;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use anyhow::{anyhow, Error};
 use tracing::{info, warn};
 use vulkanalia::{vk};
 use vulkanalia::vk::{DeviceV1_0, FenceCreateFlags, Handle, HasBuilder, InstanceV1_0, KhrSurfaceExtension, KhrSwapchainExtension, SuccessCode};
+use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
+use crate::application::gfx::frame_graph::frame_graph::{RenderPass, RenderPassCreateInfos};
 use crate::application::gfx::instance::{GfxConfig, InstanceCtx};
 use crate::application::gfx::surface::Surface;
 
@@ -75,9 +77,9 @@ impl Queues {
             let mut no_graphic_queue_map = queue_map.clone();
             no_graphic_queue_map.remove(&graphic_queue);
             //if (prefer_dedicated_present_over_compute_queue) { @TODO
-                if let Some(compute_queue) = compute_queue {
-                    no_graphic_queue_map.remove(&compute_queue);
-                }
+            if let Some(compute_queue) = compute_queue {
+                no_graphic_queue_map.remove(&compute_queue);
+            }
             //}
             if let Some(present_queue) = Self::find_best_suited_queue(&no_graphic_queue_map, &vk::QueueFlags::empty(), true, &[]) {
                 Some(present_queue)
@@ -143,7 +145,7 @@ impl Queues {
 
     pub fn initialize_for_device(&self, ctx: DeviceCtx) {
         for (_, queue) in &self.preferred {
-            unsafe { *queue.queue.lock().unwrap() = ctx.get().device.get_device_queue(queue.family_index as u32, 0); }
+            unsafe { *queue.queue.lock().unwrap() = ctx.device.get_device_queue(queue.family_index as u32, 0); }
         }
         self.ctx.replace(Some(ctx));
     }
@@ -153,7 +155,7 @@ impl Queues {
             let queue = self.preferred.get(family).unwrap_or_else(|| panic!("There is no {:?} queue available on this device !", family));
             let queue = queue.queue.lock().unwrap();
             unsafe {
-                ctx.get().device.queue_submit(*queue, submit_infos, if let Some(fence) = fence {
+                ctx.device.queue_submit(*queue, submit_infos, if let Some(fence) = fence {
                     fence.reset();
                     fence.fence
                 } else { vk::Fence::null() }).expect("Failed to submit queue");
@@ -167,7 +169,7 @@ impl Queues {
         if let Some(ctx) = self.ctx.borrow().as_ref() {
             let queue = self.preferred.get(&QueueFlag::Present).unwrap_or_else(|| panic!("There is no present queue available on this device !"));
             let queue = queue.queue.lock().unwrap();
-            unsafe { ctx.get().device.queue_present_khr(*queue, present_infos) }
+            unsafe { ctx.device.queue_present_khr(*queue, present_infos) }
         } else {
             panic!("Queue have not been initialized for current device");
         }
@@ -205,7 +207,7 @@ impl Fence {
         let create_infos = vk::FenceCreateInfo::builder().build();
         unsafe {
             Self {
-                fence: ctx.get().device.create_fence(&create_infos, None).unwrap(),
+                fence: ctx.device.create_fence(&create_infos, None).unwrap(),
                 ctx: Some(ctx),
             }
         }
@@ -215,7 +217,7 @@ impl Fence {
         let create_infos = vk::FenceCreateInfo::builder().flags(FenceCreateFlags::SIGNALED).build();
         unsafe {
             Self {
-                fence: ctx.get().device.create_fence(&create_infos, None).unwrap(),
+                fence: ctx.device.create_fence(&create_infos, None).unwrap(),
                 ctx: Some(ctx),
             }
         }
@@ -227,7 +229,7 @@ impl Fence {
 
     pub fn reset(&self) {
         let fences = vec![self.fence];
-        unsafe { self.ctx.as_ref().unwrap().get().device.reset_fences(fences.as_slice()).unwrap() }
+        unsafe { self.ctx.as_ref().unwrap().device.reset_fences(fences.as_slice()).unwrap() }
     }
 
     pub fn is_valid(&self) -> bool {
@@ -236,14 +238,14 @@ impl Fence {
 
     pub fn wait(&self) {
         let fences = vec![self.fence];
-        unsafe { self.ctx.as_ref().unwrap().get().device.wait_for_fences(fences.as_slice(), true, u64::MAX).unwrap(); }
+        unsafe { self.ctx.as_ref().unwrap().device.wait_for_fences(fences.as_slice(), true, u64::MAX).unwrap(); }
     }
 }
 
 impl Drop for Fence {
     fn drop(&mut self) {
         if let Some(ctx) = self.ctx.as_ref() {
-            unsafe { ctx.get().device.destroy_fence(self.fence, None) }
+            unsafe { ctx.device.destroy_fence(self.fence, None) }
         }
     }
 }
@@ -346,11 +348,10 @@ impl PhysicalDevice {
 }
 
 pub struct Device {
-    data: Arc<DeviceData>,
+    data: Resource<DeviceData>,
 }
 
-#[derive(Clone)]
-pub struct DeviceCtx(Weak<DeviceData>);
+pub type DeviceCtx = ResourceHandle<DeviceData>;
 
 pub struct DeviceData {
     instance: InstanceCtx,
@@ -360,12 +361,9 @@ pub struct DeviceData {
     descriptor_pool: MaybeUninit<DescriptorPool>,
     command_pool: MaybeUninit<HashMap<QueueFlag, Arc<CommandPool>>>,
     queues: Queues,
-}
+    render_passes: RwLock<Vec<Resource<RenderPass>>>,
 
-impl DeviceCtx {
-    pub fn get(&self) -> Arc<DeviceData> {
-        self.0.upgrade().unwrap()
-    }
+    self_ref: DeviceCtx
 }
 
 impl DeviceData {
@@ -406,6 +404,13 @@ impl DeviceData {
         unsafe { self.device().device_wait_idle().unwrap(); }
         locks.clear();
     }
+
+    pub fn find_or_create_render_pass(&self, create_infos: RenderPassCreateInfos) -> ResourceHandleMut<RenderPass> {
+        let render_pass = Resource::new(RenderPass::new(self.self_ref.clone(), create_infos));
+        let handle = render_pass.handle_mut();
+        self.render_passes.write().unwrap().push(render_pass);
+        handle
+    }
 }
 
 impl Deref for DeviceData {
@@ -432,7 +437,7 @@ impl Device {
         }
 
 
-        let mut unique_queue_indices =  HashMap::<usize, Vec<QueueFlag>>::new();
+        let mut unique_queue_indices = HashMap::<usize, Vec<QueueFlag>>::new();
         for (flag, queue) in &queues.preferred {
             unique_queue_indices.entry(queue.family_index).or_default().push(*flag);
         }
@@ -470,7 +475,7 @@ impl Device {
         let allocator = unsafe { vulkanalia_vma::Allocator::new(&infos) }?;
         let descriptor_pool = DescriptorPool::new(&device)?;
 
-        let shared_data = Arc::new(DeviceData {
+        let shared_data = Resource::new(DeviceData {
             physical_device,
             allocator: MaybeUninit::new(allocator),
             descriptor_pool: MaybeUninit::new(descriptor_pool),
@@ -478,13 +483,16 @@ impl Device {
             queues,
             device,
             instance: ctx.clone(),
+            render_passes: RwLock::new(vec![]),
+            self_ref: Default::default(),
         });
-        shared_data.descriptor_pool().init(DeviceCtx(Arc::downgrade(&shared_data)));
+        shared_data.self_ref = shared_data.handle();
+        shared_data.descriptor_pool().init(shared_data.handle());
 
         let device = Self { data: shared_data };
 
         let mut command_pool_list = vec![];
-        for (index, flags)  in unique_queue_indices {
+        for (index, flags) in unique_queue_indices {
             let pool = Arc::new(CommandPool::new(device.ctx(), index)?);
             unsafe {
                 for flag in flags {
@@ -503,7 +511,7 @@ impl Device {
     }
 
     pub fn ctx(&self) -> DeviceCtx {
-        DeviceCtx(Arc::downgrade(&self.data))
+        self.data.handle()
     }
 }
 
