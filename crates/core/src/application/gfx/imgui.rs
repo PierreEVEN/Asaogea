@@ -1,5 +1,5 @@
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
+use crate::application::gfx::frame_graph::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};

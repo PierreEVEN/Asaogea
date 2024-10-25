@@ -8,7 +8,7 @@ use types::rwarc::RwArc;
 use crate::application::gfx::command_buffer::{CommandBuffer, Viewport};
 use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag, SwapchainSupport};
 use crate::application::gfx::imgui::ImGui;
-use crate::application::gfx::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
+use crate::application::gfx::frame_graph::render_pass::{RenderPass, RenderPassAttachment, RenderPassCreateInfos};
 use crate::application::window::WindowCtx;
 use crate::test_app::test_app::TestApp;
 
@@ -28,6 +28,7 @@ pub struct Swapchain {
     framebuffers: Vec<vk::Framebuffer>,
     command_buffer: Vec<CommandBuffer>,
     present_pass: Option<RenderPass>,
+    forward_pass: Option<RenderPass>,
 
     frame: AtomicUsize,
 
@@ -72,6 +73,7 @@ impl Swapchain {
             framebuffers: vec![],
             command_buffer: vec![],
             present_pass: None,
+            forward_pass: None,
             frame: Default::default(),
             imgui_temp: None,
             data: Arc::new(SwapchainData {
@@ -148,6 +150,18 @@ impl Swapchain {
                 image_format: surface_format.format,
             }],
             depth_attachment: None,
+            is_present_pass: true,
+        })?);
+
+        self.forward_pass = Some(RenderPass::new(self.data.device.clone(), RenderPassCreateInfos {
+            color_attachments: vec![RenderPassAttachment {
+                clear_value: None,
+                image_format: vk::Format::R8G8B8A8_UNORM,
+            }],
+            depth_attachment: Some(RenderPassAttachment {
+                clear_value: None,
+                image_format: vk::Format::D32_SFLOAT_S8_UINT,
+            }),
             is_present_pass: true,
         })?);
 

@@ -1,5 +1,5 @@
 use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::render_pass::RenderPass;
+use crate::application::gfx::frame_graph::render_pass::RenderPass;
 use crate::application::gfx::resources::shader_module::ShaderStage;
 use anyhow::Error;
 use vulkanalia::vk;

@@ -1,5 +1,5 @@
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::application::gfx::render_pass::RenderPass;
+use crate::application::gfx::frame_graph::render_pass::RenderPass;
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
@@ -66,7 +66,7 @@ pub struct TestApp {
     pipeline: Pipeline,
     meshes: Vec<DynamicMesh>,
     ctx: SwapchainCtx,
-    descriptor_sets: DescriptorSets,
+    descriptor_sets: Vec<DescriptorSets>,
     camera: Camera,
     pitch: f32,
     yaw: f32,
@@ -122,8 +122,6 @@ impl TestApp {
             line_width: 1.0,
         })?;
 
-        let mut descriptor_sets = DescriptorSets::new(ctx.get().device().clone(), pipeline.descriptor_set_layout())?;
-
         let mut camera = Camera::default();
         camera.set_position(Vec3::new(0f32, 0f32, 0.5f32));
 
@@ -159,11 +157,16 @@ impl TestApp {
         }
         let sampler = Sampler::new(ctx.get().device().clone())?;
 
-        descriptor_sets.update(vec![
-            (ShaderInstanceBinding::Sampler(*sampler.ptr()), 0),
-            (ShaderInstanceBinding::SampledImage(*images[0].view()?, *images[0].layout()), 1)
-        ])?;
+        let mut descriptor_sets = vec![];
 
+        for image in &images {
+            let mut descriptor_set = DescriptorSets::new(ctx.get().device().clone(), pipeline.descriptor_set_layout())?;
+            descriptor_set.update(vec![
+                (ShaderInstanceBinding::Sampler(*sampler.ptr()), 0),
+                (ShaderInstanceBinding::SampledImage(*image.view()?, *image.layout()), 1)
+            ])?;
+            descriptor_sets.push(descriptor_set)
+        }
         let mut meshes = vec![];
 
         for mesh in gltf.write().get_meshes()? {
@@ -260,9 +263,9 @@ impl TestApp {
             height: self.ctx.get().window().get().read().height()?,
         });
 
-        command_buffer.bind_descriptors(&self.pipeline, &self.descriptor_sets);
+        for (i, mesh) in self.meshes.iter().enumerate() {
+            command_buffer.bind_descriptors(&self.pipeline, &self.descriptor_sets[i % self.descriptor_sets.len()]);
 
-        for mesh in &self.meshes {
             command_buffer.draw_mesh(mesh, 1, 0);
         }
         Ok(())

@@ -350,7 +350,7 @@ pub struct Device {
 }
 
 #[derive(Clone)]
-pub struct DeviceCtx(pub Weak<DeviceData>);
+pub struct DeviceCtx(Weak<DeviceData>);
 
 pub struct DeviceData {
     instance: InstanceCtx,
