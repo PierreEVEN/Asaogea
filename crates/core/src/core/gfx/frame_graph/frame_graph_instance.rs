@@ -67,6 +67,12 @@ impl FrameGraphInstance {
     }
 }
 
+#[derive(Hash, Eq, PartialEq, Clone)]
+pub enum RenderPassName {
+    Present,
+    Named(String)
+}
+
 pub struct RenderPassObject {
     ctx: DeviceCtx,
     base: RenderPass,

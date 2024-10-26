@@ -1,10 +1,23 @@
 use anyhow::Error;
 use core::engine::Engine;
+use core::application::Application;
 use core::options::{Options, WindowOptions, RenderingOption};
 
 #[no_mangle]
 #[link_section = ".data"]
 pub static NvOptimusEnablement: u32 = 0x00000001;
+
+
+pub struct GameTestApp {
+    
+}
+
+impl Application for GameTestApp {
+    fn instantiate(&mut self) {
+        todo!()
+    }
+}
+
 
 fn main() -> Result<(), Error> {
     tracing_subscriber::fmt().init();

@@ -11,7 +11,7 @@ use winit::window::WindowId;
 use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
-use crate::application::gfx::frame_graph::frame_graph_instance::{RenderPassObject};
+use crate::application::gfx::frame_graph::frame_graph_instance::{RenderPassName, RenderPassObject};
 use crate::application::gfx::frame_graph::frame_graph_definition::RenderPass;
 use crate::application::gfx::instance::{GfxConfig, InstanceCtx};
 use crate::application::gfx::physical_device::PhysicalDevice;
@@ -212,6 +212,13 @@ impl Device {
         locks.clear();
     }
 
+    pub fn find_or_create_render_pass_by_name(&self, name: &RenderPassName) -> ResourceHandleMut<RenderPassObject> {
+        let render_pass = RenderPassObject::new(self.self_ref.clone(), base);
+        let handle = render_pass.handle_mut();
+        self.render_passes.write().unwrap().push(render_pass);
+        handle
+    }
+    
     pub fn find_or_create_render_pass(&self, base: &RenderPass) -> ResourceHandleMut<RenderPassObject> {
         let render_pass = RenderPassObject::new(self.self_ref.clone(), base);
         let handle = render_pass.handle_mut();
