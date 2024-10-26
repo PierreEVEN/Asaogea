@@ -1,18 +1,18 @@
-use std::cell::{Ref, RefCell};
+use std::cell::{RefCell};
 use std::collections::{HashMap, HashSet};
 use std::mem::MaybeUninit;
 use std::ops::Deref;
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock};
 use anyhow::{anyhow, Error};
 use tracing::{info, warn};
 use vulkanalia::{vk};
-use vulkanalia::vk::{DeviceV1_0, FenceCreateFlags, Handle, HasBuilder, InstanceV1_0, KhrSurfaceExtension, KhrSwapchainExtension, SuccessCode};
+use vulkanalia::vk::{DeviceV1_0, FenceCreateFlags, Handle, HasBuilder, InstanceV1_0, KhrSurfaceExtension, KhrSwapchainExtension};
 use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
 use crate::application::gfx::frame_graph::frame_graph::{RenderPass, RenderPassCreateInfos};
 use crate::application::gfx::instance::{GfxConfig, InstanceCtx};
-use crate::application::gfx::surface::Surface;
+use crate::application::gfx::surface::{Surface, SurfaceCtx};
 
 pub struct PhysicalDevice {
     physical_device: vk::PhysicalDevice,
@@ -28,7 +28,6 @@ pub enum QueueFlag {
 }
 
 pub struct Queues {
-    queues: Vec<Arc<SingleQueue>>,
     preferred: HashMap<QueueFlag, Arc<SingleQueue>>,
     ctx: RefCell<Option<DeviceCtx>>,
 }
@@ -116,7 +115,6 @@ impl Queues {
 
         Self {
             preferred,
-            queues: queues.clone(),
             ctx: RefCell::default(),
         }
     }
@@ -422,14 +420,8 @@ impl Deref for DeviceData {
 }
 
 impl Device {
-    pub fn new(ctx: InstanceCtx, surface: &Surface, config: &GfxConfig) -> Result<Self, Error> {
+    pub fn new(ctx: InstanceCtx, surface: &SurfaceCtx, config: &GfxConfig) -> Result<Self, Error> {
         let physical_device = PhysicalDevice::new(&ctx, surface, config)?;
-
-
-        let properties = unsafe { ctx.get().instance().get_physical_device_properties(physical_device.physical_device) };
-
-        println!("TEST : {:?}", properties);
-
         let queues = Queues::search(ctx.clone(), &physical_device.physical_device, surface);
 
         for (flag, queue) in &queues.preferred {
@@ -475,7 +467,7 @@ impl Device {
         let allocator = unsafe { vulkanalia_vma::Allocator::new(&infos) }?;
         let descriptor_pool = DescriptorPool::new(&device)?;
 
-        let shared_data = Resource::new(DeviceData {
+        let mut shared_data = Resource::new(DeviceData {
             physical_device,
             allocator: MaybeUninit::new(allocator),
             descriptor_pool: MaybeUninit::new(descriptor_pool),

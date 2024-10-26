@@ -116,7 +116,7 @@ impl<T> ResourceHandleMut<T> {
         unsafe { *self.alloc.valid }
     }
 
-    fn clone(&self) -> ResourceHandle<T> {
+    pub fn as_ref(&self) -> ResourceHandle<T> {
         ResourceHandle::<T> {
             ptr: self.ptr,
             alloc: self.alloc.clone(),

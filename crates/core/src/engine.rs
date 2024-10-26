@@ -7,10 +7,9 @@ use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
 use types::resource_handle::{Resource, ResourceHandle};
-use types::rwarc::{RwArc, RwArcReadOnly, RwWeakReadOnly};
 use crate::application::gfx::instance::{GfxConfig, Instance, InstanceCtx};
 use crate::options::WindowOptions;
-use crate::application::window::{AppWindow};
+use crate::application::window::{AppWindow, WindowCtx};
 
 pub struct Engine {
     data: Resource<EngineData>,
@@ -20,7 +19,7 @@ pub struct Engine {
 pub type EngineCtx = ResourceHandle<EngineData>;
 
 pub struct EngineData {
-    windows: HashMap<WindowId, AppWindow>,
+    windows: HashMap<WindowId, Resource<AppWindow>>,
     instance: Option<Instance>,
 }
 impl EngineData {
@@ -54,14 +53,15 @@ impl Engine {
         Ok(event_loop.run_app(self)?)
     }
 
-    pub fn create_window(&mut self, event_loop: &ActiveEventLoop, options: &WindowOptions) -> Result<(), Error> {
+    pub fn create_window(&mut self, event_loop: &ActiveEventLoop, options: &WindowOptions) -> Result<WindowCtx, Error> {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
         let mut window = AppWindow::new(self.ctx(), event_loop, options)?;
         let device = self.data.instance.as_mut().unwrap().get_or_create_device(window.ctx());
         window.init_swapchain(device)?;
+        let handle = window.handle();
         self.data.windows.insert(window.ctx().id()?, window);
-        Ok(())
+        Ok(handle)
     }
 
     pub fn ctx(&self) -> EngineCtx {

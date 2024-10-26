@@ -215,7 +215,7 @@ impl Instance {
             return device.ctx();
         }
         let device = Device::new(self.ctx(),
-                                 ctx.surface(),
+                                 &ctx.surface(),
                                  &GfxConfig {
                                      validation_layers: true,
                                      required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],

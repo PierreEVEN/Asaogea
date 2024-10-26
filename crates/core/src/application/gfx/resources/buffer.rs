@@ -3,7 +3,7 @@ use anyhow::{anyhow, Error};
 use std::ops::Deref;
 use std::ptr::slice_from_raw_parts;
 use vulkanalia::vk;
-use vulkanalia::vk::{DeviceV1_0, HasBuilder};
+use vulkanalia::vk::{HasBuilder};
 use vulkanalia_vma::{Alloc, AllocationCreateFlags};
 
 #[derive(Copy, Clone, Eq, PartialEq)]

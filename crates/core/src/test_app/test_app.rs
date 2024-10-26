@@ -87,7 +87,7 @@ impl TestApp {
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
         let fragment = compiler.compile(&RawShaderDefinition::new("imgui-fragment", "ps_6_0", FRAGMENT.to_string()))?;
 
-        let vertex = ShaderStage::new(ctx.get().device().clone(), &vertex.raw(), ShaderStageInfos {
+        let vertex = ShaderStage::new(ctx.device().clone(), &vertex.raw(), ShaderStageInfos {
             descriptor_bindings: vec![],
             push_constant_size: Some(size_of::<Pc>() as u32),
             stage_input: vec![
@@ -100,7 +100,7 @@ impl TestApp {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: "main".to_string(),
         })?;
-        let fragment = ShaderStage::new(ctx.get().device().clone(), &fragment.raw(),
+        let fragment = ShaderStage::new(ctx.device().clone(), &fragment.raw(),
                                         ShaderStageInfos {
                                             descriptor_bindings: vec![
                                                 ShaderStageBindings { binding: 0, descriptor_type: vk::DescriptorType::SAMPLER },
@@ -112,7 +112,7 @@ impl TestApp {
                                             entry_point: "main".to_string(),
                                         })?;
 
-        let pipeline = Pipeline::new(ctx.get().device().clone(), render_pass, vec![vertex, fragment], &PipelineConfig {
+        let pipeline = Pipeline::new(ctx.device().clone(), render_pass, vec![vertex, fragment], &PipelineConfig {
             culling: vk::CullModeFlags::BACK,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
@@ -133,7 +133,7 @@ impl TestApp {
         {
             let js = JobSystem::new(JobSystem::num_cpus());
 
-            let device = ctx.get().device().clone();
+            let device = ctx.device().clone();
 
             let num_images = gltf.read().num_images();
             for i in 0..num_images {
@@ -155,12 +155,12 @@ impl TestApp {
                 info!("Load image {} / {}", res.1, num_images);
             }
         }
-        let sampler = Sampler::new(ctx.get().device().clone())?;
+        let sampler = Sampler::new(ctx.device().clone())?;
 
         let mut descriptor_sets = vec![];
 
         for image in &images {
-            let mut descriptor_set = DescriptorSets::new(ctx.get().device().clone(), pipeline.descriptor_set_layout())?;
+            let mut descriptor_set = DescriptorSets::new(ctx.device().clone(), pipeline.descriptor_set_layout())?;
             descriptor_set.update(vec![
                 (ShaderInstanceBinding::Sampler(*sampler.ptr()), 0),
                 (ShaderInstanceBinding::SampledImage(*image.view()?, *image.layout()), 1)
@@ -171,7 +171,7 @@ impl TestApp {
 
         for mesh in gltf.write().get_meshes()? {
             for primitive in mesh {
-                let mut temp_mesh = DynamicMesh::new(size_of::<Vec3>(), ctx.get().device().clone())?;
+                let mut temp_mesh = DynamicMesh::new(size_of::<Vec3>(), ctx.device().clone())?;
                 if let Some(index_buffer) = &primitive.index {
                     temp_mesh.set_indexed_vertices(0, &primitive.vertex, 0, index_buffer)?;
                 }
@@ -197,10 +197,9 @@ impl TestApp {
     pub fn render(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
         command_buffer.bind_pipeline(&self.pipeline);
 
-        let win = self.ctx.get();
-        let w = win.window();
+        let w = self.ctx.window();
         let inputs = w.input_manager();
-        let ds = self.ctx.get().window().delta_time;
+        let ds = self.ctx.window().delta_time;
 
         let speed = self.speed;
 
@@ -250,7 +249,7 @@ impl TestApp {
         self.last_mouse = *inputs.mouse_position();
 
 
-        let perspective = Mat4::perspective_rh(PI / 2f32, self.ctx.get().window().width()? as f32 / self.ctx.get().window().height()? as f32, 0.001f32, 10000f32);
+        let perspective = Mat4::perspective_rh(PI / 2f32, self.ctx.window().width()? as f32 / self.ctx.window().height()? as f32, 0.001f32, 10000f32);
         command_buffer.push_constant(&self.pipeline, &BufferMemory::from_struct(Pc {
             model: Mat4::IDENTITY,
             camera: perspective.mul_mat4(&self.camera.matrix()),
@@ -259,8 +258,8 @@ impl TestApp {
         command_buffer.set_scissor(Scissors {
             min_x: 0,
             min_y: 0,
-            width: self.ctx.get().window().width()?,
-            height: self.ctx.get().window().height()?,
+            width: self.ctx.window().width()?,
+            height: self.ctx.window().height()?,
         });
 
         for (i, mesh) in self.meshes.iter().enumerate() {

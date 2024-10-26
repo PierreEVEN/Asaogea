@@ -7,12 +7,10 @@ use gltf::mesh::util::ReadIndices;
 use gltf::{Document, Gltf};
 use image::DynamicImage;
 use image::ImageFormat::{Jpeg, Png};
-use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
 
 pub struct GltfPrimitiveData {
     pub index: Option<BufferMemory<'static>>,
@@ -21,7 +19,6 @@ pub struct GltfPrimitiveData {
 }
 
 pub struct GltfImporter {
-    textures: RwLock<HashMap<usize, DynamicImage>>,
     meshes: Vec<Vec<GltfPrimitiveData>>,
     buffers: Vec<gltf::buffer::Data>,
     document: Document,
@@ -46,7 +43,6 @@ impl GltfImporter {
         }
 
         Ok(Self {
-            textures: Default::default(),
             meshes: Default::default(),
             buffers,
             document,
