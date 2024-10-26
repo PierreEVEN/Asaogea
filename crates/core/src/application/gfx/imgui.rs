@@ -18,7 +18,7 @@ use vulkanalia::vk;
 use vulkanalia::vk::ImageType;
 use winit::event::MouseButton;
 use types::resource_handle::{Resource, ResourceHandle};
-use crate::application::gfx::frame_graph::frame_graph::RenderPassObject;
+use crate::application::gfx::frame_graph::frame_graph_instance::RenderPassObject;
 
 const PIXEL: &str = r#"
 struct VSInput {

@@ -1,4 +1,4 @@
-use crate::application::gfx::device::{DeviceCtx, QueueFlag};
+use crate::application::gfx::device::{DeviceCtx};
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::DescriptorSets;
 use crate::application::gfx::resources::mesh::DynamicMesh;
@@ -9,6 +9,7 @@ use std::thread;
 use types::rwslock::RwSLock;
 use vulkanalia::vk;
 use vulkanalia::vk::{CommandBufferBeginInfo, CommandBufferResetFlags, CommandBufferUsageFlags, DeviceV1_0, Handle, HasBuilder};
+use crate::application::gfx::queues::QueueFlag;
 
 pub struct CommandPool {
     command_pool: RwSLock<HashMap<thread::ThreadId, vk::CommandPool>>,

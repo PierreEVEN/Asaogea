@@ -7,3 +7,5 @@ pub mod resources;
 pub mod descriptor_pool;
 pub mod swapchain;
 pub mod frame_graph;
+pub mod physical_device;
+pub mod queues;

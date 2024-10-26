@@ -19,10 +19,25 @@ pub enum BufferAccess
     GpuToCpu,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Default)]
+pub enum BufferType
+{
+    // No allowed updates
+    Immutable,
+    // Pretty never updated. Updating data would cause some freezes
+    #[default]
+    Static,
+    // Data is stored internally, then automatically submitted. Can lead to a memory overhead depending on the get size.
+    Dynamic,
+    // Data need to be submitted every frames
+    Immediate,
+}
+
 #[derive(Copy, Clone)]
 pub struct BufferCreateInfo {
     pub usage: vk::BufferUsageFlags,
     pub access: BufferAccess,
+    pub buffer_type: BufferType,
 }
 
 pub struct Buffer {
@@ -56,6 +71,10 @@ impl Buffer {
     }
 
     pub fn resize(&mut self, mut new_element_count: usize) -> Result<(), Error> {
+        if let BufferType::Immutable = self.create_infos.buffer_type {
+            return Err(anyhow!("Cannot resize an immutable buffer"));
+        }
+        
         if new_element_count == 0 {
             new_element_count = 1;
         }
@@ -63,6 +82,7 @@ impl Buffer {
             return Ok(());
         }
 
+        // @TODO implement dynamic buffers
         self.ctx.wait_idle();
 
         self.destroy();
@@ -121,7 +141,7 @@ impl Buffer {
             }
         }
 
-        let (buffer, buffer_memory) = unsafe { self.ctx.allocator().create_buffer(buffer_info, &options) }.unwrap();
+        let (buffer, buffer_memory) = unsafe { self.ctx.allocator().create_buffer(buffer_info, &options) }?;
 
         self.buffer = Some(buffer);
         self.buffer_memory = Some(buffer_memory);
@@ -170,7 +190,7 @@ impl<'a> BufferMemory<'a> {
     pub fn from_slice<T: Sized>(structure: &'a [T]) -> Self {
         unsafe {
             Self {
-                data: BufferDataType::Ptr(slice_from_raw_parts(structure.as_ptr() as *const u8, structure.len() * size_of::<T>()).as_ref().unwrap()),
+                data: BufferDataType::Ptr(slice_from_raw_parts(structure.as_ptr() as *const u8, size_of_val(structure)).as_ref().unwrap()),
                 stride: size_of::<T>(),
                 elements: structure.len(),
             }

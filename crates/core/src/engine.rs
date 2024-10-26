@@ -21,11 +21,11 @@ pub type EngineCtx = ResourceHandle<EngineData>;
 
 pub struct EngineData {
     windows: HashMap<WindowId, Resource<AppWindow>>,
-    instance: Option<Instance>,
+    instance: Resource<Instance>,
 }
 impl EngineData {
     pub fn instance(&self) -> InstanceCtx {
-        self.instance.as_ref().unwrap().ctx()
+        self.instance.handle()
     }
 }
 
@@ -38,9 +38,9 @@ impl Engine {
         let mut data = Resource::new(EngineData
         {
             windows: Default::default(),
-            instance: None,
+            instance: Resource::default(),
         });
-        data.instance = Some(Instance::new(data.handle(), &mut config)?);
+        data.instance = Instance::new(data.handle(), &mut config)?;
 
         Ok(Self {
             data,
@@ -58,7 +58,7 @@ impl Engine {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
         let mut window = AppWindow::new(self.ctx(), event_loop, options)?;
-        let device = self.data.instance.as_mut().unwrap().get_or_create_device(window.handle());
+        let device = self.data.instance.get_or_create_device(window.handle());
 
         let forward_pass = RenderPass {
             color_attachments: vec![RenderPassAttachment {
@@ -82,7 +82,7 @@ impl Engine {
         };
 
         let frame_graph = FrameGraph {
-            present_pass: present_pass,
+            present_pass,
         };
 
         window.init_swapchain(device, frame_graph)?;
@@ -123,6 +123,6 @@ impl ApplicationHandler for Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         self.data.windows.clear();
-        self.data.instance = None;
+        self.data.instance = Resource::default();
     }
 }

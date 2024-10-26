@@ -1,12 +1,13 @@
 use crate::application::gfx::command_buffer::CommandBuffer;
-use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag};
-use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferMemory};
+use crate::application::gfx::device::{DeviceCtx, Fence};
+use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferCreateInfo, BufferMemory};
 use anyhow::{anyhow, Error};
 use image::{ColorType, DynamicImage, EncodableLayout};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia_vma::Alloc;
 use types::resource_handle::Resource;
+use crate::application::gfx::queues::QueueFlag;
 
 pub struct Image {
     image: Option<vk::Image>,
@@ -122,7 +123,7 @@ impl Image {
     }
 
     pub fn set_data(&mut self, data: &BufferMemory) -> Result<(), Error> {
-        let mut transfer_buffer = Buffer::new(self.ctx.clone(), 1, data.get_size(), crate::application::gfx::resources::buffer::BufferCreateInfo { usage: vk::BufferUsageFlags::TRANSFER_SRC, access: BufferAccess::CpuToGpu })?;
+        let mut transfer_buffer = Buffer::new(self.ctx.clone(), 1, data.get_size(), BufferCreateInfo { usage: vk::BufferUsageFlags::TRANSFER_SRC, access: BufferAccess::CpuToGpu, buffer_type: Default::default() })?;
 
         transfer_buffer.set_data(0, data)?;
 

@@ -1,13 +1,12 @@
 use std::any::TypeId;
 use std::collections::HashSet;
 use std::ffi::{c_void};
-use std::sync::{Arc, Weak};
 use anyhow::{Error};
 use tracing::{debug, error, trace, warn};
 use vulkanalia::{vk, Entry};
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::vk::{DebugUtilsMessengerEXT, DeviceV1_0, EntryV1_0, ExtDebugUtilsExtension, Handle, HasBuilder};
-use types::rwslock::RwSLock;
+use types::resource_handle::{Resource, ResourceHandle};
 use crate::application::gfx::device::{Device, DeviceCtx};
 use crate::application::window::{WindowCtx};
 use crate::engine::{EngineCtx};
@@ -20,41 +19,18 @@ pub struct GfxConfig {
 }
 
 pub struct Instance {
-    data: Arc<InstanceData>,
     _entry: Entry,
     _messenger: DebugUtilsMessengerEXT,
-}
-
-#[derive(Clone)]
-pub struct InstanceCtx(Weak<InstanceData>);
-impl InstanceCtx {
-    pub fn get(&self) -> Arc<InstanceData> {
-        self.0.upgrade().unwrap()
-    }
-}
-pub struct InstanceData {
     engine: EngineCtx,
-    instance: Option<vulkanalia::Instance>,
-    device: RwSLock<Option<Device>>,
-}
-impl InstanceData {
-    pub fn device(&self) -> DeviceCtx {
-        self.device.read().unwrap().as_ref().unwrap().ctx()
-    }
+    instance: vulkanalia::Instance,
+    device: Resource<Device>,
+    self_ctx: InstanceCtx
 }
 
-impl InstanceData {
-    pub fn engine(&self) -> &EngineCtx {
-        &self.engine
-    }
-    pub fn instance(&self) -> &vulkanalia::Instance {
-        self.instance.as_ref().unwrap()
-    }
-}
-
+pub type InstanceCtx = ResourceHandle<Instance>;
 
 impl Instance {
-    pub fn new(ctx: EngineCtx, config: &mut GfxConfig) -> Result<Self, Error> {
+    pub fn new(ctx: EngineCtx, config: &mut GfxConfig) -> Result<Resource<Self>, Error> {
         let entry = unsafe {
             let loader = LibloadingLoader::new(LIBRARY)?;
             Entry::new(loader).map_err(|b| anyhow::anyhow!("{}", b))?
@@ -118,23 +94,28 @@ impl Instance {
             DebugUtilsMessengerEXT::null()
         };
 
-        let instance = Self {
-            data: Arc::new(InstanceData {
-                engine: ctx,
-                instance: Some(instance),
-                device: RwSLock::new(None),
-            }),
+        let mut instance = Resource::new(Self {
+            engine: ctx,
+            instance,
+            device: Resource::default(),
             _entry: entry,
             _messenger: messenger,
-        };
+            self_ctx: Default::default(),
+        });
+        instance.self_ctx = instance.handle();
         Ok(instance)
     }
 
-    pub fn ctx(&self) -> InstanceCtx {
-        InstanceCtx(Arc::downgrade(&self.data))
+    pub fn device(&self) -> DeviceCtx {
+        self.device.handle()
     }
-
-    pub fn set_vk_object_name<T: vk::Handle + 'static + Copy>(ctx: &DeviceCtx, object: T, handle: u64, name: &str) -> T {
+    pub fn engine(&self) -> &EngineCtx {
+        &self.engine
+    }
+    pub fn ptr(&self) -> &vulkanalia::Instance {
+        &self.instance
+    }
+    pub fn set_vk_object_name<T: Handle + 'static + Copy>(ctx: &DeviceCtx, object: T, handle: u64, name: &str) -> T {
         let object_type =
             if TypeId::of::<vk::Instance>() == TypeId::of::<T>() {
                 vk::ObjectType::INSTANCE
@@ -194,11 +175,10 @@ impl Instance {
                 panic!("unhandled object type id")
             };
 
-        let string_name = format!("{}", name);
+        let string_name = name.to_string();
 
         unsafe {
-            let instance = ctx.get();
-            instance.instance().set_debug_utils_object_name_ext(ctx.device().handle(), &
+            ctx.instance().ptr().set_debug_utils_object_name_ext(ctx.device().handle(), &
                 vk::DebugUtilsObjectNameInfoEXT::builder()
                     .object_type(object_type)
                     .object_handle(handle)
@@ -211,18 +191,24 @@ impl Instance {
 
 
     pub fn get_or_create_device(&mut self, ctx: WindowCtx) -> DeviceCtx {
-        if let Some(device) = self.data.device.read().unwrap().as_ref() {
-            return device.ctx();
+        if self.device.is_valid() {
+            return self.device.handle();
         }
-        let device = Device::new(self.ctx(),
+        let device = Device::new(self.self_ctx.clone(),
                                  &ctx.surface(),
                                  &GfxConfig {
                                      validation_layers: true,
                                      required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
                                  }).unwrap();
-        let ctx = device.ctx();
-        *self.data.device.write().unwrap() = Some(device);
+        let ctx = device.handle();
+        self.device = device;
         ctx
+    }
+}
+
+impl Drop for Instance {
+    fn drop(&mut self) {
+        self.device = Resource::default();
     }
 }
 

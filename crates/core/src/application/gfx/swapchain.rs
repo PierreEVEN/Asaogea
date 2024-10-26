@@ -1,5 +1,5 @@
-use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag, SwapchainSupport};
-use crate::application::gfx::frame_graph::frame_graph::{FrameGraphInstance, FrameGraphTargetInstance};
+use crate::application::gfx::device::{DeviceCtx, Fence};
+use crate::application::gfx::frame_graph::frame_graph_instance::{FrameGraphInstance, FrameGraphTargetInstance};
 use crate::application::gfx::frame_graph::frame_graph_definition::FrameGraph;
 use crate::application::window::WindowCtx;
 use anyhow::{anyhow, Error};
@@ -7,6 +7,8 @@ use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, ImageView, KhrSwapchainExtension};
 use crate::application::gfx::imgui::ImGui;
+use crate::application::gfx::physical_device::SwapchainSupport;
+use crate::application::gfx::queues::QueueFlag;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
@@ -25,9 +27,9 @@ fn get_swapchain_surface_format(swapchain_support: &SwapchainSupport) -> vk::Sur
 pub struct Swapchain {
     swapchain: Option<vk::SwapchainKHR>,
 
-    // Stored accross frame (3)
+    // Stored across frame (3)
     swapchain_images: Vec<Image>,
-    swapchain_image_views: Vec<vk::ImageView>,
+    swapchain_image_views: Vec<ImageView>,
 
     // PerFramePool (2)
     image_available_semaphores: Vec<Resource<vk::Semaphore>>,
@@ -49,7 +51,7 @@ pub struct Swapchain {
 impl Swapchain {
     pub fn new(device: DeviceCtx, window_ctx: WindowCtx) -> Result<Resource<Self>, Error> {
         let swapchain_support = SwapchainSupport::get(
-            device.get().instance(),
+            device.instance().ptr(),
             window_ctx.surface().ptr(),
             *device.physical_device().ptr())?;
         let surface_format = get_swapchain_surface_format(&swapchain_support);
@@ -84,7 +86,7 @@ impl Swapchain {
         }
 
         let swapchain_support = SwapchainSupport::get(
-            self.device.get().instance(),
+            self.device.instance().ptr(),
             self.window.surface().ptr(),
             *self.device.physical_device().ptr())?;
 
@@ -263,10 +265,7 @@ impl Swapchain {
 
 impl Drop for Swapchain {
     fn drop(&mut self) {
-        self.device.wait_idle();
-
         self.destroy_swapchain().unwrap();
-
         unsafe {
             self.image_available_semaphores
                 .iter()

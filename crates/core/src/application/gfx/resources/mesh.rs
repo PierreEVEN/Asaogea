@@ -51,6 +51,7 @@ impl DynamicMesh {
             self.index_buffer = Some(Buffer::from_buffer_memory(self.ctx.clone(), index_data, BufferCreateInfo {
                 usage: vk::BufferUsageFlags::INDEX_BUFFER,
                 access: BufferAccess::GpuOnly,
+                buffer_type: Default::default(),
             })?);
         } else {
             let idx = self.index_buffer.as_mut().unwrap();
@@ -68,6 +69,7 @@ impl DynamicMesh {
             self.vertex_buffer = Some(Buffer::from_buffer_memory(self.ctx.clone(), vertex_data, BufferCreateInfo {
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                 access: BufferAccess::GpuOnly,
+                buffer_type: Default::default(),
             })?);
         } else {
             let vtx = self.vertex_buffer.as_mut().unwrap();
@@ -86,6 +88,7 @@ impl DynamicMesh {
                 self.vertex_buffer = Some(Buffer::new(self.ctx.clone(), self.vertex_structure_size, vertex_count, BufferCreateInfo {
                     usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                     access: BufferAccess::GpuOnly,
+                    buffer_type: Default::default(),
                 })?);
             }
             Some(vtx) => {
@@ -101,6 +104,7 @@ impl DynamicMesh {
                 self.index_buffer = Some(Buffer::new(self.ctx.clone(), self.vertex_structure_size, index_count, BufferCreateInfo {
                     usage: vk::BufferUsageFlags::INDEX_BUFFER,
                     access: BufferAccess::GpuOnly,
+                    buffer_type: Default::default(),
                 })?);
             }
             Some(idx) => {

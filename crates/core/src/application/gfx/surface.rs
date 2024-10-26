@@ -24,7 +24,7 @@ impl Surface {
                 let info = vk::Win32SurfaceCreateInfoKHR::builder()
                     .hinstance(hinstance.get() as HINSTANCE)
                     .hwnd(handle.hwnd.get() as HINSTANCE);
-                unsafe { ctx.get().instance().create_win32_surface_khr(&info, None) }?
+                unsafe { ctx.ptr().create_win32_surface_khr(&info, None) }?
             }
             value => {
                 return Err(anyhow!("Unsupported window platform : {:?}", value));
@@ -44,6 +44,6 @@ impl Surface {
 
 impl Drop for Surface {
     fn drop(&mut self) {
-        unsafe { self.instance.get().instance().destroy_surface_khr(self.surface, None); }
+        unsafe { self.instance.ptr().destroy_surface_khr(self.surface, None); }
     }
 }

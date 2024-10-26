@@ -21,8 +21,8 @@ impl<T> Drop for Resource<T> {
     fn drop(&mut self) {
         if !self.data.is_null() {
             unsafe {
-                *(self.alloc.valid as *mut bool) = false;
                 drop(Box::from_raw(self.data as *mut T));
+                *(self.alloc.valid as *mut bool) = false;
             }
         }
     }

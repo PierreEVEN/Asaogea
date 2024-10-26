@@ -1,5 +1,4 @@
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors, Viewport};
-use crate::application::gfx::device::QueueFlag::Graphic;
 use crate::application::gfx::device::DeviceCtx;
 use crate::application::gfx::frame_graph::frame_graph_definition::{ClearValues, FrameGraph, RenderPass, RenderTarget};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
@@ -7,6 +6,7 @@ use crate::application::gfx::swapchain::SwapchainCtx;
 use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, HasBuilder};
+use crate::application::gfx::queues::QueueFlag;
 
 pub enum FrameGraphTargetInstance {
     Swapchain(SwapchainCtx),
@@ -239,7 +239,7 @@ impl RenderPassObject {
                 attachments.push(AttachmentInstance::new(&self.ctx, format, true, image_count as u32, draw_res));
             }
 
-            children.push(self.ctx.find_or_create_render_pass(&child).instantiate(FrameGraphTargetInstance::Internal(attachments)));
+            children.push(self.ctx.find_or_create_render_pass(child).instantiate(FrameGraphTargetInstance::Internal(attachments)));
         }
 
         let mut instance = Resource::new(RenderPassInstance {
@@ -417,7 +417,7 @@ impl RenderPassInstance {
             .signal_semaphores(signal_semaphores.as_slice())
             .build();
         let submit_infos = vec![submit_infos];
-        self.ctx.queues().submit(&Graphic, submit_infos.as_slice(), signal_fence);
+        self.ctx.queues().submit(&QueueFlag::Graphic, submit_infos.as_slice(), signal_fence);
     }
 }
 
@@ -457,7 +457,7 @@ impl Framebuffer {
         let semaphore_info = vk::SemaphoreCreateInfo::builder();
         Self {
             vk_framebuffer: unsafe { render_pass.ctx.device().create_framebuffer(&create_info, None) }.unwrap(),
-            command_buffer: CommandBuffer::new(render_pass.ctx.clone(), &Graphic).unwrap(),
+            command_buffer: CommandBuffer::new(render_pass.ctx.clone(), &QueueFlag::Graphic).unwrap(),
             render_finished_semaphore: unsafe { render_pass.ctx.device().create_semaphore(&semaphore_info, None).unwrap() },
             ctx: render_pass.ctx.clone(),
         }
