@@ -1,13 +1,12 @@
-use std::sync::{Arc};
-use anyhow::{anyhow, Error};
-use vulkanalia::vk;
-use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, ImageView, KhrSwapchainExtension};
-use types::resource_handle::{Resource, ResourceHandle};
-use types::rwarc::RwArc;
 use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag, SwapchainSupport};
 use crate::application::gfx::frame_graph::frame_graph::{FrameGraphInstance, FrameGraphTargetInstance};
 use crate::application::gfx::frame_graph::frame_graph_definition::FrameGraph;
 use crate::application::window::WindowCtx;
+use anyhow::{anyhow, Error};
+use types::resource_handle::{Resource, ResourceHandle};
+use vulkanalia::vk;
+use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, ImageView, KhrSwapchainExtension};
+use crate::application::gfx::imgui::ImGui;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
@@ -25,15 +24,18 @@ fn get_swapchain_surface_format(swapchain_support: &SwapchainSupport) -> vk::Sur
 
 pub struct Swapchain {
     swapchain: Option<vk::SwapchainKHR>,
+
+    // Stored accross frame (3)
     swapchain_images: Vec<Image>,
     swapchain_image_views: Vec<vk::ImageView>,
-    swapchain_extent: Extent2D,
 
-    image_available_semaphores: Vec<vk::Semaphore>,
-    in_flight_fences: Vec<Arc<Fence>>,
-    images_in_flight: RwArc<Vec<Arc<Fence>>>,
+    // PerFramePool (2)
+    image_available_semaphores: Vec<Resource<vk::Semaphore>>,
+    in_flight_fences: Vec<Resource<Fence>>,
+
     frame_graph: Resource<FrameGraphInstance>,
     frame: usize,
+    swapchain_extent: Extent2D,
 
     device: DeviceCtx,
     window: WindowCtx,
@@ -41,6 +43,8 @@ pub struct Swapchain {
     surface_format: vk::Format,
 
     self_ctx: SwapchainCtx,
+
+    pub imgui: Option<ImGui>
 }
 
 impl Swapchain {
@@ -57,7 +61,6 @@ impl Swapchain {
             swapchain_image_views: vec![],
             image_available_semaphores: vec![],
             in_flight_fences: vec![],
-            images_in_flight: RwArc::new(vec![]),
             frame_graph: Resource::default(),
             frame: Default::default(),
             device,
@@ -65,6 +68,7 @@ impl Swapchain {
             surface_format: surface_format.format,
             self_ctx: SwapchainCtx::default(),
             swapchain_extent: Default::default(),
+            imgui: None,
         });
         swapchain.self_ctx = swapchain.handle();
         Ok(swapchain)
@@ -73,6 +77,7 @@ impl Swapchain {
     pub fn create_renderer(&mut self, frame_graph: FrameGraph) {
         self.create_or_recreate_swapchain().unwrap();
         self.frame_graph = FrameGraphInstance::new(self.device.clone(), frame_graph, FrameGraphTargetInstance::Swapchain(self.self_ctx.clone()));
+        self.imgui = Some(ImGui::new(self.self_ctx.clone(), self.frame_graph.present_pass().render_pass_object()).unwrap())
     }
 
     pub fn create_or_recreate_swapchain(&mut self) -> Result<(), Error> {
@@ -121,16 +126,6 @@ impl Swapchain {
         let swapchain = unsafe { self.device.device().create_swapchain_khr(&info, None) }?;
         self.swapchain = Some(swapchain);
 
-        let semaphore_info = vk::SemaphoreCreateInfo::builder();
-        unsafe {
-            for _ in 0..MAX_FRAMES_IN_FLIGHT {
-                let semaphore = self.device.device().create_semaphore(&semaphore_info, None)?;
-                self.image_available_semaphores.push(semaphore);
-                let device = self.device().clone();
-                self.in_flight_fences.push(Arc::new(Fence::new_signaled(device)));
-            }
-        }
-
         self.swapchain_images = unsafe { self.device.device().get_swapchain_images_khr(self.swapchain.expect("The swapchain have not been initialized yet"))? };
         self.swapchain_image_views = self
             .swapchain_images
@@ -157,16 +152,30 @@ impl Swapchain {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        *self.images_in_flight.write() = self.swapchain_images
-            .iter()
-            .map(|_| Arc::new(Fence::default()))
-            .collect();
+        let semaphore_info = vk::SemaphoreCreateInfo::builder();
+        unsafe {
+            for _ in 0..MAX_FRAMES_IN_FLIGHT {
+                let semaphore = self.device.device().create_semaphore(&semaphore_info, None)?;
+                self.image_available_semaphores.push(Resource::new(semaphore));
+                let device = self.device().clone();
+                self.in_flight_fences.push(Resource::new(Fence::new_signaled(device)));
+            }
+        }
 
         if self.frame_graph.is_valid() {
             self.frame_graph.resize(self.swapchain_extent.width as usize, self.swapchain_extent.height as usize, &self.swapchain_image_views);
         }
         Ok(())
     }
+
+    pub fn get_image_available_semaphore(&self, image_index: usize) -> ResourceHandle<vk::Semaphore> {
+        self.image_available_semaphores[image_index].handle()
+    }
+
+    pub fn get_in_flight_fence(&self, image_index: usize) -> ResourceHandle<Fence> {
+        self.in_flight_fences[image_index].handle()
+    }
+
 
     pub fn get_swapchain_present_mode(swapchain_support: &SwapchainSupport) -> vk::PresentModeKHR {
         swapchain_support.present_modes
@@ -191,32 +200,24 @@ impl Swapchain {
     }
 
     pub fn render(&mut self) -> Result<bool, Error> {
-        let frame = self.frame;
+        let current_frame = self.frame;
         let swapchain = self.swapchain.ok_or(anyhow!("Swapchain is not valid. Maybe you forget to call Swapchain::create_or_recreate()"))?;
         let device = &self.device;
         let device_vulkan = device.device();
 
-        self.in_flight_fences[frame].wait();
 
-        let result = unsafe { device_vulkan.acquire_next_image_khr(swapchain, u64::MAX, self.image_available_semaphores[frame], vk::Fence::null()) };
+        self.in_flight_fences[current_frame].wait();
 
+        let result = unsafe { device_vulkan.acquire_next_image_khr(swapchain, u64::MAX, *self.image_available_semaphores[current_frame], vk::Fence::null()) };
         let image_index = match result {
             Ok((image_index, _)) => image_index as usize,
             Err(vk::ErrorCode::OUT_OF_DATE_KHR) => { return Ok(true) }
             Err(e) => return Err(anyhow!("Failed to acquire next image : {}", e)),
         };
 
-        if self.images_in_flight.read()[image_index].is_valid() {
-            self.images_in_flight.read()[image_index].wait();
-        }
+        self.frame_graph.draw(image_index, current_frame);
 
-        self.images_in_flight.write()[image_index] = self.in_flight_fences[frame].clone();
-
-        self.frame_graph.draw(frame);
-
-
-
-
+        // Present
         let signal_semaphores = vec![self.frame_graph.present_pass().render_finished_semaphore(image_index)];
         let swapchains = vec![swapchain];
         let image_indices = vec![image_index as u32];
@@ -233,7 +234,7 @@ impl Swapchain {
         } else if let Err(e) = result {
             return Err(anyhow!("Failed to present image : {}", e));
         }
-        self.frame = (frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        self.frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
         Ok(false)
     }
     pub fn device(&self) -> &DeviceCtx {
@@ -249,12 +250,16 @@ impl Drop for Swapchain {
     fn drop(&mut self) {
         self.device.wait_idle();
 
+        for image in &self.swapchain_image_views {
+            unsafe { self.device.device().destroy_image_view(*image, None) };
+        }
+
         self.destroy_swapchain().unwrap();
 
         unsafe {
             self.image_available_semaphores
                 .iter()
-                .for_each(|s| self.device.device().destroy_semaphore(*s, None));
+                .for_each(|s| self.device.device().destroy_semaphore(**s, None));
         }
     }
 }

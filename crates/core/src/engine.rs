@@ -82,7 +82,7 @@ impl Engine {
         };
 
         let frame_graph = FrameGraph {
-            persent_pass: present_pass,
+            present_pass: present_pass,
         };
 
         window.init_swapchain(device, frame_graph)?;

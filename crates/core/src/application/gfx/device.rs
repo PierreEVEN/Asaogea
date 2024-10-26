@@ -149,7 +149,7 @@ impl Queues {
         self.ctx.replace(Some(ctx));
     }
 
-    pub fn submit(&self, family: &QueueFlag, submit_infos: &[vk::SubmitInfo], fence: Option<&Fence>) {
+    pub fn submit(&self, family: &QueueFlag, submit_infos: &[vk::SubmitInfo], fence: Option<ResourceHandle<Fence>>) {
         if let Some(ctx) = self.ctx.borrow().as_ref() {
             let queue = self.preferred.get(family).unwrap_or_else(|| panic!("There is no {:?} queue available on this device !", family));
             let queue = queue.queue.lock().unwrap();
@@ -202,13 +202,13 @@ pub struct Fence {
 }
 
 impl Fence {
-    pub fn new(ctx: DeviceCtx) -> Self {
+    pub fn new(ctx: DeviceCtx) -> Resource<Self> {
         let create_infos = vk::FenceCreateInfo::builder().build();
         unsafe {
-            Self {
+            Resource::new(Self {
                 fence: ctx.device.create_fence(&create_infos, None).unwrap(),
                 ctx: Some(ctx),
-            }
+            })
         }
     }
 
@@ -511,6 +511,7 @@ impl Device {
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
+            self.data.render_passes.write().unwrap().clear();
             self.data.command_pool.assume_init_read();
             self.data.descriptor_pool.assume_init_read();
             self.data.allocator.assume_init_read();

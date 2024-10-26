@@ -13,10 +13,11 @@ use imgui::sys::{igCreateContext, igEndFrame, igGetDrawData, igGetIO, igGetMainV
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::ffi::c_char;
 use std::ptr::null_mut;
+use std::sync::RwLock;
 use vulkanalia::vk;
 use vulkanalia::vk::ImageType;
 use winit::event::MouseButton;
-use types::resource_handle::Resource;
+use types::resource_handle::{Resource, ResourceHandle};
 use crate::application::gfx::frame_graph::frame_graph::RenderPassObject;
 
 const PIXEL: &str = r#"
@@ -60,7 +61,7 @@ float4 main(VsToFs input) : SV_TARGET {
 
 pub struct ImGui {
     _compiler: HlslCompiler,
-    mesh: DynamicMesh,
+    mesh: RwLock<DynamicMesh>,
     pipeline: Pipeline,
     descriptor_sets: DescriptorSets,
     _font_texture: Resource<Image>,
@@ -76,7 +77,7 @@ pub struct ImGuiPushConstants {
 }
 
 impl ImGui {
-    pub fn new(ctx: SwapchainCtx, render_pass: &RenderPassObject) -> Result<Self, Error> {
+    pub fn new(ctx: SwapchainCtx, render_pass: &ResourceHandle<RenderPassObject>) -> Result<Self, Error> {
         let mut compiler = HlslCompiler::new()?;
 
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
@@ -204,7 +205,7 @@ impl ImGui {
         ])?;
         Ok(Self {
             _compiler: compiler,
-            mesh,
+            mesh: RwLock::new(mesh),
             pipeline,
             descriptor_sets: desc_set,
             _font_texture: font_texture,
@@ -213,7 +214,7 @@ impl ImGui {
         })
     }
 
-    pub fn render(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
+    pub fn render(&self, command_buffer: &CommandBuffer) -> Result<(), Error> {
         let io = unsafe { &mut *igGetIO() };
 
         let window_data = self.ctx.window();
@@ -252,14 +253,14 @@ impl ImGui {
             let mut vertex_start = 0;
             let mut index_start = 0;
 
-            self.mesh.reserve_vertices(draw_data.TotalVtxCount as usize)?;
-            self.mesh.reserve_indices(draw_data.TotalIdxCount as usize)?;
+            self.mesh.write().unwrap().reserve_vertices(draw_data.TotalVtxCount as usize)?;
+            self.mesh.write().unwrap().reserve_indices(draw_data.TotalIdxCount as usize)?;
 
             for n in 0..draw_data.CmdListsCount
             {
                 let cmd_list = &**draw_data.CmdLists.offset(n as isize);
 
-                self.mesh.set_indexed_vertices(vertex_start, &BufferMemory::from_raw(cmd_list.VtxBuffer.Data as *const u8, size_of::<ImDrawVert>(), cmd_list.VtxBuffer.Size as usize),
+                self.mesh.write().unwrap().set_indexed_vertices(vertex_start, &BufferMemory::from_raw(cmd_list.VtxBuffer.Data as *const u8, size_of::<ImDrawVert>(), cmd_list.VtxBuffer.Size as usize),
                                                index_start, &BufferMemory::from_raw(cmd_list.IdxBuffer.Data as *const u8, size_of::<ImDrawIdx>(), cmd_list.IdxBuffer.Size as usize))?;
 
                 vertex_start += cmd_list.VtxBuffer.Size as usize;
@@ -343,7 +344,7 @@ impl ImGui {
                             command_buffer.bind_pipeline(&self.pipeline);
                             command_buffer.bind_descriptors(&self.pipeline, &self.descriptor_sets);
 
-                            command_buffer.draw_mesh_advanced(&self.mesh, pcmd.IdxOffset + global_idx_offset, pcmd.VtxOffset + global_vtx_offset, pcmd.ElemCount, 1, 0);
+                            command_buffer.draw_mesh_advanced(&self.mesh.write().unwrap(), pcmd.IdxOffset + global_idx_offset, pcmd.VtxOffset + global_vtx_offset, pcmd.ElemCount, 1, 0);
                         }
                     }
                 }

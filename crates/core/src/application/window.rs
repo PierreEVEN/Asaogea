@@ -1,8 +1,6 @@
 use std::time::Instant;
 use anyhow::{anyhow, Error};
-use glam::Vec4;
 use tracing::{error};
-use vulkanalia::vk;
 use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};

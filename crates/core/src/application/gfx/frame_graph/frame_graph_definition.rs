@@ -13,7 +13,7 @@ pub enum ClearValues {
 
 #[derive(Clone)]
 pub struct FrameGraph {
-    pub persent_pass: RenderPass
+    pub present_pass: RenderPass
 }
 
 #[derive(Clone)]
