@@ -44,20 +44,18 @@ impl AttachmentInstance {
 
 pub struct FrameGraphInstance {
     present_pass: Resource<RenderPassInstance>,
-    base: FrameGraph,
 }
 
 impl FrameGraphInstance {
     pub fn new(ctx: DeviceCtx, base: FrameGraph, target: FrameGraphTargetInstance) -> Resource<Self> {
         let render_pass_object = ctx.find_or_create_render_pass(&base.present_pass);
         Resource::new(Self {
-            present_pass: render_pass_object.instantiate(target),
-            base,
+            present_pass: render_pass_object.instantiate(target)
         })
     }
 
-    pub fn resize(&self, width: usize, height: usize, swapchain_images: &Vec<vk::ImageView>) {
-        self.present_pass.resize(width, height, swapchain_images);
+    pub fn resize(&mut self) {
+        self.present_pass.resize();
     }
 
     pub fn draw(&self, target_index: usize, image_index: usize) {
@@ -176,7 +174,7 @@ impl RenderPassObject {
                 .dependency_flags(vk::DependencyFlags::BY_REGION)
                 .build(),
         ];
-        
+
         let subpasses = vec![subpass];
         let render_pass_infos = vk::RenderPassCreateInfo::builder()
             .attachments(attachment_descriptions.as_slice())
@@ -251,13 +249,14 @@ impl RenderPassObject {
             object: self.self_ctx.clone(),
             current_draw_res: draw_res,
             target,
+            self_ctx: Default::default(),
         });
+        instance.self_ctx = instance.handle();
         let handle = instance.handle();
         for i in 0..framebuffer_count {
             instance.framebuffers.push(Framebuffer::new(handle.clone(), i as u32));
         }
         assert!(!instance.framebuffers.is_empty());
-
         instance
     }
 }
@@ -276,12 +275,25 @@ pub struct RenderPassInstance {
     ctx: DeviceCtx,
     current_draw_res: Extent2D,
     target: FrameGraphTargetInstance,
+    self_ctx: ResourceHandle<RenderPassInstance>
 }
 
 impl RenderPassInstance {
-    pub fn resize(&self, width: usize, height: usize, swapchain_images: &Vec<vk::ImageView>) {
-        for child in &self.children {
-            child.resize(width, height, swapchain_images);
+    pub fn resize(&mut self) {
+        let draw_res = match &self.target {
+            FrameGraphTargetInstance::Swapchain(swapchain) => { Extent2D { width: swapchain.window().width().unwrap(), height: swapchain.window().height().unwrap() } }
+            FrameGraphTargetInstance::Image(image) => { image[0].res() }
+            FrameGraphTargetInstance::Internal(attachment) => { attachment[0].images[0].res() }
+        };
+        self.current_draw_res = draw_res;
+        for child in &mut self.children {
+            child.resize();
+        }
+
+        let num_framebuffers = self.framebuffers.len();
+        self.framebuffers.clear();
+        for i in 0..num_framebuffers {
+            self.framebuffers.push(Framebuffer::new(self.self_ctx.clone(), i as u32));
         }
     }
 
@@ -363,8 +375,8 @@ impl RenderPassInstance {
         framebuffer.command_buffer.set_scissor(Scissors {
             min_x: 0,
             min_y: 0,
-            width: self.current_draw_res.width as u32,
-            height: self.current_draw_res.height as u32,
+            width: self.current_draw_res.width,
+            height: self.current_draw_res.height,
         });
 
         // Draw content

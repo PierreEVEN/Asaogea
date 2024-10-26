@@ -63,6 +63,8 @@ impl Buffer {
             return Ok(());
         }
 
+        self.ctx.wait_idle();
+
         self.destroy();
         self.elements = new_element_count;
         self.create()?;

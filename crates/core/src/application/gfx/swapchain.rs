@@ -35,7 +35,6 @@ pub struct Swapchain {
 
     frame_graph: Resource<FrameGraphInstance>,
     frame: usize,
-    swapchain_extent: Extent2D,
 
     device: DeviceCtx,
     window: WindowCtx,
@@ -67,7 +66,6 @@ impl Swapchain {
             window: window_ctx,
             surface_format: surface_format.format,
             self_ctx: SwapchainCtx::default(),
-            swapchain_extent: Default::default(),
             imgui: None,
         });
         swapchain.self_ctx = swapchain.handle();
@@ -163,7 +161,7 @@ impl Swapchain {
         }
 
         if self.frame_graph.is_valid() {
-            self.frame_graph.resize(self.swapchain_extent.width as usize, self.swapchain_extent.height as usize, &self.swapchain_image_views);
+            self.frame_graph.resize();
         }
         Ok(())
     }
@@ -196,10 +194,27 @@ impl Swapchain {
                 self.device.device().destroy_swapchain_khr(swapchain, None);
             }
         }
+
+        for image in &self.swapchain_image_views {
+            unsafe { self.device.device().destroy_image_view(*image, None) };
+        }
+
         Ok(())
     }
 
-    pub fn render(&mut self) -> Result<bool, Error> {
+    pub fn render(&mut self) -> Result<(), Error> {
+        let should_be_resized = self.render_internal()?;
+        if should_be_resized {
+            self.create_or_recreate_swapchain()?;
+        }
+        let should_resize = self.render_internal()?;
+        if should_resize {
+            return Err(anyhow!("Failed to resize renderer"));
+        }
+        Ok(())
+    }
+
+    fn render_internal(&mut self) -> Result<bool, Error> {
         let current_frame = self.frame;
         let swapchain = self.swapchain.ok_or(anyhow!("Swapchain is not valid. Maybe you forget to call Swapchain::create_or_recreate()"))?;
         let device = &self.device;
@@ -249,10 +264,6 @@ impl Swapchain {
 impl Drop for Swapchain {
     fn drop(&mut self) {
         self.device.wait_idle();
-
-        for image in &self.swapchain_image_views {
-            unsafe { self.device.device().destroy_image_view(*image, None) };
-        }
 
         self.destroy_swapchain().unwrap();
 

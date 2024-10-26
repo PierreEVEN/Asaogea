@@ -23,8 +23,8 @@ pub struct AppWindow {
     _engine: EngineCtx,
     input_manager: InputManager,
     pub delta_time: f64,
-    
-    self_ctx: ResourceHandle<AppWindow>
+
+    self_ctx: ResourceHandle<AppWindow>,
 }
 pub type WindowCtx = ResourceHandle<AppWindow>;
 
@@ -70,21 +70,9 @@ impl AppWindow {
                 self.last_frame_time = Instant::now();
                 if !self.minimized {
                     self.input_manager.begin_frame();
-                    let should_recreate = match self.swapchain.render() {
-                        Ok(should_recreate) => { should_recreate }
-                        Err(err) => {
-                            error!("Failed to render frame : {}", err);
-                            false
-                        }
+                    if let Err(err) = self.swapchain.render() {
+                        error!("Failed to render frame : {}", err);
                     };
-                    if should_recreate {
-                        match self.swapchain.create_or_recreate_swapchain() {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error!("Failed to recreate swapchain : {}", err);
-                            }
-                        };
-                    }
                 }
                 self.window.as_ref().unwrap().request_redraw();
             }
