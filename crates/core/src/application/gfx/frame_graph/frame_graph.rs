@@ -1,38 +1,68 @@
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors, Viewport};
 use crate::application::gfx::device::QueueFlag::Graphic;
 use crate::application::gfx::device::{DeviceCtx, QueueFlag};
-use crate::application::gfx::frame_graph::frame_graph_definition::FrameGraph;
-use crate::application::gfx::resources::image::Image;
+use crate::application::gfx::frame_graph::frame_graph_definition::{ClearValues, FrameGraph, RenderPass, RenderTarget};
+use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
 use crate::application::gfx::swapchain::SwapchainCtx;
-use std::cell::RefCell;
 use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
-use vulkanalia::vk::{DeviceV1_0, HasBuilder};
+use vulkanalia::vk::{DeviceV1_0, Extent2D, HasBuilder};
 
-pub struct FrameGraphInstance {
-    present_pass: Resource<RenderPassInstance>,
-    target: FrameGraphTargetInstance,
-    ctx: DeviceCtx,
-    base: FrameGraph
-}
-
-#[derive(Clone)]
 pub enum FrameGraphTargetInstance {
     Swapchain(SwapchainCtx),
-    Image(ResourceHandle<Image>),
+    Image(Vec<ResourceHandle<Image>>),
+    Internal(Vec<AttachmentInstance>),
+}
+
+pub struct AttachmentInstance {
+    images: Vec<Resource<Image>>,
+}
+
+impl AttachmentInstance {
+    pub fn new(ctx: &DeviceCtx, format: vk::Format, is_depth: bool, image_count: u32, res: vk::Extent2D) -> Self {
+        let mut images = vec![];
+
+        for _ in 0..image_count {
+            images.push(Image::new(ctx.clone(), ImageCreateOptions {
+                image_type: vk::ImageType::_2D,
+                format,
+                usage: if is_depth { vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT } else { vk::ImageUsageFlags::COLOR_ATTACHMENT } | vk::ImageUsageFlags::SAMPLED,
+                width: res.width,
+                height: res.height,
+                depth: 1,
+                mips_levels: 1,
+                is_depth,
+            }).unwrap());
+        }
+
+        Self {
+            images,
+        }
+    }
+}
+
+impl FrameGraphTargetInstance {
+    pub fn image_count(&self) -> u32 {
+        match self {
+            FrameGraphTargetInstance::Swapchain(swapchain) => { swapchain.get_swapchain_images().len() as u32 }
+            FrameGraphTargetInstance::Image(images) => { images.len() as u32 }
+            FrameGraphTargetInstance::Internal(attachments) => { attachments[0].images.len() as u32 }
+        }
+    }
 }
 
 
-pub struct SwapchainImage {
-    pub image_view: vk::ImageView,
-    pub wait_semaphore: vk::Semaphore,
-    pub work_finished_fence: vk::Fence,
+pub struct FrameGraphInstance {
+    ctx: DeviceCtx,
+    present_pass: Resource<RenderPassInstance>,
+    base: FrameGraph,
 }
 
 impl FrameGraphInstance {
-    pub fn new(base: FrameGraph, target: FrameGraphTargetInstance, ctx: DeviceCtx) -> Resource<Self> {
+    pub fn new(ctx: DeviceCtx, base: FrameGraph, target: FrameGraphTargetInstance) -> Resource<Self> {
+        let render_pass_object = ctx.find_or_create_render_pass(&base.persent_pass);
         Resource::new(Self {
-            present_pass,
+            present_pass: render_pass_object.instantiate(target),
             ctx,
             base,
         })
@@ -42,50 +72,37 @@ impl FrameGraphInstance {
         self.present_pass.resize(width, height, swapchain_images);
     }
 
-    pub fn draw(&self, image_index: usize, swapchain_image: SwapchainImage) {
-        self.present_pass.draw(image_index, Some(swapchain_image));
+    pub fn draw(&self, image_index: usize) {
+        self.present_pass.draw(image_index);
     }
 
-    pub fn present_to_swapchain(&self, image_index: usize, swapchain: &vk::SwapchainKHR) -> bool {
-        let signal_semaphores = &[self.present_pass.framebuffers[image_index].render_finished_semaphore];
-        let swapchains = &[*swapchain];
-        let image_indices = &[image_index as u32];
-        let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(signal_semaphores)
-            .swapchains(swapchains)
-            .image_indices(image_indices)
-            .build();
-
-        let result = self.ctx.queues().present(&present_info);
-        result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR)
+    pub fn present_pass(&self) -> &RenderPassInstance {
+        &*self.present_pass
     }
 }
 
-pub struct RenderPass {
-    dependencies: Vec<ResourceHandle<RenderPass>>,
-    pub create_infos: RenderPassCreateInfos,
-    pub render_pass: vk::RenderPass,
+pub struct RenderPassObject {
     ctx: DeviceCtx,
+    base: RenderPass,
+    render_pass: vk::RenderPass,
     _instances: Vec<Resource<RenderPassInstance>>,
+    self_ctx: ResourceHandle<RenderPassObject>,
 }
 
-impl RenderPass {
-    pub fn new(ctx: DeviceCtx, create_infos: RenderPassCreateInfos) -> Self {
+impl RenderPassObject {
+    pub fn new(ctx: DeviceCtx, base: &RenderPass) -> Resource<Self> {
         let mut attachment_descriptions = Vec::<vk::AttachmentDescription>::new();
         let mut color_attachment_references = Vec::<vk::AttachmentReference>::new();
         let mut _depth_attachment_reference = vk::AttachmentReference::default();
         let mut clear_values = Vec::new();
 
         // add color color_attachments
-        for attachment in &create_infos.color_attachments
+        for attachment in &base.color_attachments
         {
             let (present_pass, format) = match &attachment.source {
-                AttachmentSource::Surface(surface) => {
-                    (true, surface.format())
-                }
-                AttachmentSource::Image(format) => {
-                    (false, *format)
-                }
+                RenderTarget::Window(window) => { (true, window.swapchain().format()) }
+                RenderTarget::Image(image) => { (false, image.format()) }
+                RenderTarget::Internal(format) => { (false, *format) }
             };
 
             let attachment_index: u32 = attachment_descriptions.len() as u32;
@@ -96,7 +113,8 @@ impl RenderPass {
                 .load_op(match attachment.clear_value {
                     ClearValues::DontClear => { vk::AttachmentLoadOp::DONT_CARE }
                     _ => { vk::AttachmentLoadOp::CLEAR }
-                })
+                }
+                )
                 .store_op(vk::AttachmentStoreOp::STORE)
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
@@ -118,13 +136,14 @@ impl RenderPass {
             .build();
 
         // add depth attachment
-        match &create_infos.depth_attachment {
+        match &base.depth_attachment {
             None => {}
             Some(attachment) => {
                 let attachment_index: u32 = attachment_descriptions.len() as u32;
                 let format = match &attachment.source {
-                    AttachmentSource::Surface(swapchain) => { swapchain.format() }
-                    AttachmentSource::Image(format) => { *format }
+                    RenderTarget::Window(window) => { panic!("Swapchain doesn't support depth target") }
+                    RenderTarget::Image(image) => { image.format() }
+                    RenderTarget::Internal(format) => { *format }
                 };
                 attachment_descriptions.push(vk::AttachmentDescription::builder()
                     .format(format)
@@ -179,60 +198,85 @@ impl RenderPass {
 
         let render_pass = unsafe { ctx.device().create_render_pass(&render_pass_infos, None) }.unwrap();
 
-
-        Self {
-            dependencies: vec![],
-            create_infos,
-            render_pass,
+        let mut pass = Resource::new(Self {
             ctx,
+            base: base.clone(),
+            render_pass,
             _instances: vec![],
-        }
+            self_ctx: Default::default(),
+        });
+        pass.self_ctx = pass.handle();
+
+        pass
     }
 
-    pub fn attach(&mut self, dependency: ResourceHandle<RenderPass>) {
-        self.dependencies.push(dependency);
+    pub fn base(&self) -> &RenderPass {
+        &self.base
     }
 
-    fn instantiate(&self, image_count: usize) -> Resource<RenderPassInstance> {
+    pub fn ptr(&self) -> &vk::RenderPass {
+        &self.render_pass
+    }
+
+    fn instantiate(&self, target: FrameGraphTargetInstance) -> Resource<RenderPassInstance> {
         let mut children = vec![];
 
-        for dependency in &self.dependencies {
-            children.push(dependency.instantiate(image_count));
+        let draw_res = match &target {
+            FrameGraphTargetInstance::Swapchain(swapchain) => { Extent2D { width: swapchain.window().width().unwrap(), height: swapchain.window().height().unwrap() } }
+            FrameGraphTargetInstance::Image(image) => { image[0].res() }
+            FrameGraphTargetInstance::Internal(attachment) => { attachment[0].images[0].res() }
+        };
+
+
+        for child in &self.base.children {
+            let mut attachments = vec![];
+
+            for color in &child.color_attachments {
+                let format = match color.source {
+                    RenderTarget::Internal(format) => { format }
+                    _ => panic!("Only internal formats are allowed for children targets")
+                };
+                attachments.push(AttachmentInstance::new(&self.ctx, format, false, target.image_count(), draw_res));
+            }
+            if let Some(depth) = &child.depth_attachment {
+                let format = match depth.source {
+                    RenderTarget::Internal(format) => { format }
+                    _ => panic!("Only internal formats are allowed for children targets")
+                };
+                attachments.push(AttachmentInstance::new(&self.ctx, format, true, target.image_count(), draw_res));
+            }
+
+            children.push(self.ctx.find_or_create_render_pass(&child).instantiate(FrameGraphTargetInstance::Internal(attachments)));
         }
 
-        let mut attachments = self.create_infos.color_attachments.clone();
-        if let Some(depth) = &self.create_infos.depth_attachment {
-            attachments.push(depth.clone());
-        }
-
-
-        let mut framebuffers = vec![];
-        for _ in 0..image_count {
-            framebuffers.push(Framebuffer::new(self.ctx.clone()));
-        }
-
-        let instance = Resource::new(RenderPassInstance {
-            framebuffers,
+        let mut instance = Resource::new(RenderPassInstance {
+            framebuffers: vec![],
             children,
             ctx: self.ctx.clone(),
-            attachments,
-            render_pass: self.render_pass,
-            width: 0,
-            height: 0,
+            image_count: target.image_count(),
+            object: self.self_ctx.clone(),
+            current_draw_res: draw_res,
+            target,
         });
+        let handle = instance.handle();
+        for i in 0..instance.target.image_count() {
+            instance.framebuffers.push(Framebuffer::new(handle.clone(), i));
+        }
+        assert!(!instance.framebuffers.is_empty());
+
         instance
     }
 }
 
 
 pub struct RenderPassInstance {
-    pub framebuffers: Vec<Framebuffer>,
+    framebuffers: Vec<Framebuffer>,
     children: Vec<Resource<RenderPassInstance>>,
+    object: ResourceHandle<RenderPassObject>,
     ctx: DeviceCtx,
-    attachments: Vec<RenderPassAttachment>,
-    render_pass: vk::RenderPass,
-    width: usize,
-    height: usize,
+    image_count: u32,
+    current_draw_res: Extent2D,
+    target: FrameGraphTargetInstance,
 }
 
 impl RenderPassInstance {
@@ -240,16 +284,15 @@ impl RenderPassInstance {
         for child in &self.children {
             child.resize(width, height, swapchain_images);
         }
-
-        for framebuffer in &self.framebuffers {
-            framebuffer.create_or_recreate(width, height, self.render_pass, swapchain_images);
-        }
     }
 
+    pub fn render_finished_semaphore(&self, image_index: usize) -> vk::Semaphore {
+        self.framebuffers[image_index].render_finished_semaphore
+    }
 
-    fn draw(&self, frame_index: usize, swapchain_image: Option<SwapchainImage>) {
+    fn draw(&self, frame_index: usize) {
         for child in &*self.children {
-            child.draw(frame_index, None);
+            child.draw(frame_index);
         }
 
         let device = &self.ctx;
@@ -262,7 +305,8 @@ impl RenderPassInstance {
 
 
         let mut clear_values = Vec::new();
-        for attachment in &self.attachments {
+
+        for attachment in &self.object.base.color_attachments {
             clear_values.push(match attachment.clear_value {
                 ClearValues::DontClear => { vk::ClearValue::default() }
                 ClearValues::Color(color) => {
@@ -272,6 +316,12 @@ impl RenderPassInstance {
                         }
                     }
                 }
+                _ => { panic!("Not a color attachment") }
+            });
+        }
+        for attachment in &self.object.base.depth_attachment {
+            clear_values.push(match attachment.clear_value {
+                ClearValues::DontClear => { vk::ClearValue::default() }
                 ClearValues::DepthStencil(depth_stencil) => {
                     vk::ClearValue {
                         depth_stencil: vk::ClearDepthStencilValue {
@@ -280,16 +330,17 @@ impl RenderPassInstance {
                         }
                     }
                 }
+                _ => { panic!("Not a depth attachment") }
             });
         }
 
         // begin pass
         let begin_infos = vk::RenderPassBeginInfo::builder()
-            .render_pass(self.render_pass)
-            .framebuffer(*framebuffer.vk_framebuffer.borrow())
+            .render_pass(self.object.render_pass)
+            .framebuffer(framebuffer.vk_framebuffer)
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D { width: self.width as u32, height: self.height as u32 },
+                extent: self.current_draw_res,
             })
             .clear_values(clear_values.as_slice())
             .build();
@@ -299,9 +350,9 @@ impl RenderPassInstance {
 
         framebuffer.command_buffer.set_viewport(&Viewport {
             min_x: 0.0,
-            min_y: self.height as f32,
-            width: self.width as f32,
-            height: -(self.height as f32),
+            min_y: self.current_draw_res.height as f32,
+            width: self.current_draw_res.width as f32,
+            height: -(self.current_draw_res.height as f32),
             min_depth: 0.0,
             max_depth: 1.0,
         });
@@ -309,8 +360,8 @@ impl RenderPassInstance {
         framebuffer.command_buffer.set_scissor(Scissors {
             min_x: 0,
             min_y: 0,
-            width: self.width as u32,
-            height: self.height as u32,
+            width: self.current_draw_res.width as u32,
+            height: self.current_draw_res.height as u32,
         });
 
         // Draw content
@@ -322,9 +373,11 @@ impl RenderPassInstance {
 
         // Submit buffer
         let mut wait_semaphores = Vec::new();
-        if let Some(swapchain_image) = swapchain_image {
-            wait_semaphores.push(swapchain_image.wait_semaphore);
+
+        if let FrameGraphTargetInstance::Swapchain(swapchain) = &self.target {
+            //@todo wait_semaphores.push(swapchain.wait_semaphore);
         }
+
         for _ in &self.children {
             wait_semaphores.push(framebuffer.render_finished_semaphore);
         }
@@ -341,35 +394,56 @@ impl RenderPassInstance {
             .signal_semaphores(signal_semaphores.as_slice())
             .build();
         let submit_infos = vec![submit_infos];
-        self.ctx.queues().submit(&QueueFlag::Graphic, submit_infos.as_slice(), None);
+        self.ctx.queues().submit(&Graphic, submit_infos.as_slice(), None);
     }
 }
 
 
 pub struct Framebuffer {
-    vk_framebuffer: RefCell<vk::Framebuffer>,
+    vk_framebuffer: vk::Framebuffer,
     command_buffer: CommandBuffer,
     render_finished_semaphore: vk::Semaphore,
     ctx: DeviceCtx,
 }
 
 impl Framebuffer {
-    pub fn new(ctx: DeviceCtx) -> Self {
+    pub fn new(render_pass: ResourceHandle<RenderPassInstance>, image_index: u32) -> Self {
+        let mut source_views = vec![];
+        match &render_pass.target {
+            FrameGraphTargetInstance::Swapchain(swapchain) => {
+                source_views.push(swapchain.get_swapchain_images()[image_index as usize])
+            }
+            FrameGraphTargetInstance::Image(images) => {
+                source_views.push(*images[image_index as usize].view().unwrap())
+            }
+            FrameGraphTargetInstance::Internal(attachments) => {
+                for attachment in attachments {
+                    source_views.push(*attachment.images[image_index as usize].view().unwrap())
+                }
+            }
+        }
+
+        let create_info = vk::FramebufferCreateInfo::builder()
+            .render_pass(render_pass.object.render_pass)
+            .attachments(source_views.as_slice())
+            .width(render_pass.current_draw_res.width)
+            .height(render_pass.current_draw_res.height)
+            .layers(1);
+
+
+        let semaphore_info = vk::SemaphoreCreateInfo::builder();
         Self {
-            vk_framebuffer: RefCell::default(),
-            command_buffer: CommandBuffer::new(ctx.clone(), &Graphic).unwrap(),
-            render_finished_semaphore: Default::default(),
-            ctx,
+            vk_framebuffer: unsafe { render_pass.ctx.device().create_framebuffer(&create_info, None) }.unwrap(),
+            command_buffer: CommandBuffer::new(render_pass.ctx.clone(), &Graphic).unwrap(),
+            render_finished_semaphore: unsafe { render_pass.ctx.device().create_semaphore(&semaphore_info, None).unwrap() },
+            ctx: render_pass.ctx.clone(),
         }
     }
+}
 
-    pub fn create_or_recreate(&self, width: usize, height: usize, render_pass: vk::RenderPass, swapchain_images: &Vec<vk::ImageView>) {
-        let create_info = vk::FramebufferCreateInfo::builder()
-            .render_pass(render_pass)
-            .attachments(swapchain_images)
-            .width(width as u32)
-            .height(height as u32)
-            .layers(1);
-        self.vk_framebuffer.replace(unsafe { self.ctx.device().create_framebuffer(&create_info, None) }.unwrap());
+impl Drop for Framebuffer {
+    fn drop(&mut self) {
+        unsafe { self.ctx.device().destroy_framebuffer(self.vk_framebuffer, None) };
+        unsafe { self.ctx.device().destroy_semaphore(self.render_finished_semaphore, None) };
     }
 }

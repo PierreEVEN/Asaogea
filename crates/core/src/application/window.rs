@@ -8,9 +8,9 @@ use winit::event_loop::{ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 use types::resource_handle::{Resource, ResourceHandle};
 use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::frame_graph::frame_graph::{AttachmentSource, ClearValues, FrameGraphInstance, RenderPassAttachment, RenderPassCreateInfos};
+use crate::application::gfx::frame_graph::frame_graph_definition::FrameGraph;
 use crate::application::gfx::surface::{Surface, SurfaceCtx};
-use crate::application::gfx::swapchain::Swapchain;
+use crate::application::gfx::swapchain::{Swapchain, SwapchainCtx};
 use crate::application::input_manager::InputManager;
 use crate::engine::{EngineCtx};
 use crate::options::{WindowOptions};
@@ -19,7 +19,7 @@ pub struct AppWindow {
     minimized: bool,
     last_frame_time: Instant,
 
-    swapchain: Option<Resource<Swapchain>>,
+    swapchain: Resource<Swapchain>,
     surface: Resource<Surface>,
     window: Option<Window>,
     _engine: EngineCtx,
@@ -42,7 +42,7 @@ impl AppWindow {
         let mut window = Resource::new(Self {
             window: Some(window),
             surface,
-            swapchain: None,
+            swapchain: Resource::default(),
             _engine: ctx,
             input_manager: InputManager::default(),
             delta_time: 0.0,
@@ -54,40 +54,9 @@ impl AppWindow {
         Ok(window)
     }
 
-    pub fn init_swapchain(&mut self, ctx: DeviceCtx) -> Result<(), Error> {
-
-
-
-
-
-
-
-
-        let mut present_pass = ctx.find_or_create_render_pass(RenderPassCreateInfos {
-            color_attachments: vec![RenderPassAttachment {
-                clear_value: ClearValues::Color(Vec4::new(1f32, 0f32, 0f32, 1f32)),
-                source: AttachmentSource::Surface(self.self_ctx.clone()),
-            }],
-            depth_attachment: None,
-        });
-
-        present_pass.attach(ctx.find_or_create_render_pass(RenderPassCreateInfos {
-            color_attachments: vec![RenderPassAttachment {
-                clear_value: ClearValues::Color(Vec4::new(1f32, 1f32, 0f32, 1f32)),
-                source: AttachmentSource::Image(vk::Format::R16G16B16A16_SFLOAT),
-            }],
-            depth_attachment: Some(RenderPassAttachment {
-                clear_value: ClearValues::DontClear,
-                source: AttachmentSource::Image(vk::Format::D32_SFLOAT),
-            }),
-        }).as_ref());
-
-        let framegraph = FrameGraphInstance::new(swapchain.device.clone(), present_pass, crate::application::gfx::swapchain::MAX_FRAMES_IN_FLIGHT + 1);
-        
-        
-        
-        
-        self.swapchain = Some(Swapchain::new(ctx, self.self_ctx.clone())?);
+    pub fn init_swapchain(&mut self, ctx: DeviceCtx, frame_graph: FrameGraph) -> Result<(), Error> {
+        self.swapchain = Swapchain::new(ctx, self.self_ctx.clone())?;
+        self.swapchain.create_renderer(frame_graph);
         Ok(())
     }
 
@@ -103,7 +72,7 @@ impl AppWindow {
                 self.last_frame_time = Instant::now();
                 if !self.minimized {
                     self.input_manager.begin_frame();
-                    let should_recreate = match self.swapchain.as_mut().unwrap().render() {
+                    let should_recreate = match self.swapchain.render() {
                         Ok(should_recreate) => { should_recreate }
                         Err(err) => {
                             error!("Failed to render frame : {}", err);
@@ -111,7 +80,7 @@ impl AppWindow {
                         }
                     };
                     if should_recreate {
-                        match self.swapchain.as_mut().unwrap().create_or_recreate_swapchain() {
+                        match self.swapchain.create_or_recreate_swapchain() {
                             Ok(_) => {}
                             Err(err) => {
                                 error!("Failed to recreate swapchain : {}", err);
@@ -131,6 +100,9 @@ impl AppWindow {
 
     pub fn surface(&self) -> SurfaceCtx {
         self.surface.handle()
+    }
+    pub fn swapchain(&self) -> SwapchainCtx {
+        self.swapchain.handle()
     }
     pub fn ptr(&self) -> Result<&Window, Error> {
         self.window.as_ref().ok_or(anyhow!("Window have been destroyed"))

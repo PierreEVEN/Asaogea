@@ -10,7 +10,8 @@ use vulkanalia::vk::{DeviceV1_0, FenceCreateFlags, Handle, HasBuilder, InstanceV
 use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
-use crate::application::gfx::frame_graph::frame_graph::{RenderPass, RenderPassCreateInfos};
+use crate::application::gfx::frame_graph::frame_graph::{RenderPassObject};
+use crate::application::gfx::frame_graph::frame_graph_definition::RenderPass;
 use crate::application::gfx::instance::{GfxConfig, InstanceCtx};
 use crate::application::gfx::surface::{Surface, SurfaceCtx};
 
@@ -359,7 +360,7 @@ pub struct DeviceData {
     descriptor_pool: MaybeUninit<DescriptorPool>,
     command_pool: MaybeUninit<HashMap<QueueFlag, Arc<CommandPool>>>,
     queues: Queues,
-    render_passes: RwLock<Vec<Resource<RenderPass>>>,
+    render_passes: RwLock<Vec<Resource<RenderPassObject>>>,
 
     self_ref: DeviceCtx
 }
@@ -403,8 +404,8 @@ impl DeviceData {
         locks.clear();
     }
 
-    pub fn find_or_create_render_pass(&self, create_infos: RenderPassCreateInfos) -> ResourceHandleMut<RenderPass> {
-        let render_pass = Resource::new(RenderPass::new(self.self_ref.clone(), create_infos));
+    pub fn find_or_create_render_pass(&self, base: &RenderPass) -> ResourceHandleMut<RenderPassObject> {
+        let render_pass = RenderPassObject::new(self.self_ref.clone(), base);
         let handle = render_pass.handle_mut();
         self.render_passes.write().unwrap().push(render_pass);
         handle

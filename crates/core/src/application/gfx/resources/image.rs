@@ -6,6 +6,7 @@ use image::{ColorType, DynamicImage, EncodableLayout};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia_vma::Alloc;
+use types::resource_handle::Resource;
 
 pub struct Image {
     image: Option<vk::Image>,
@@ -30,7 +31,7 @@ pub struct ImageCreateOptions {
 
 
 impl Image {
-    pub fn new(ctx: DeviceCtx, create_infos: ImageCreateOptions) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceCtx, create_infos: ImageCreateOptions) -> Result<Resource<Self>, Error> {
         let infos = vk::ImageCreateInfo::builder()
             .image_type(create_infos.image_type)
             .format(create_infos.format)
@@ -62,17 +63,17 @@ impl Image {
 
         let image_view = unsafe { ctx.device().create_image_view(&image_view_ci, None)? };
 
-        Ok(Self {
+        Ok(Resource::new(Self {
             image: Some(image),
             allocation: Some(allocation),
             view: Some(image_view),
             create_infos,
             current_layout: vk::ImageLayout::UNDEFINED,
             ctx,
-        })
+        }))
     }
 
-    pub fn from_dynamic_image(ctx: DeviceCtx, data: &DynamicImage, create_infos: ImageCreateOptions) -> Result<Self, Error> {
+    pub fn from_dynamic_image(ctx: DeviceCtx, data: &DynamicImage, create_infos: ImageCreateOptions) -> Result<Resource<Self>, Error> {
         let format = match data.color() {
             ColorType::L8 => { vk::Format::R8_UNORM }
             ColorType::La8 => { vk::Format::R8G8_UNORM }
@@ -98,7 +99,7 @@ impl Image {
             ColorType::Rgb8 => {
                 image.set_data(&BufferMemory::from_slice(data.clone().into_rgba8().as_bytes()))?;
             }
-            ColorType::Rgb16  => {
+            ColorType::Rgb16 => {
                 image.set_data(&BufferMemory::from_slice(data.clone().into_rgba16().as_bytes()))?;
             }
             ColorType::Rgb32F => {
@@ -110,6 +111,14 @@ impl Image {
         }
 
         Ok(image)
+    }
+
+    pub fn format(&self) -> vk::Format {
+        self.create_infos.format
+    }
+
+    pub fn res(&self) -> vk::Extent2D {
+        vk::Extent2D { width: self.create_infos.width, height: self.create_infos.height }
     }
 
     pub fn set_data(&mut self, data: &BufferMemory) -> Result<(), Error> {
@@ -151,7 +160,7 @@ impl Image {
 
         let fence = Fence::new(self.ctx.clone());
         let submit_infos = vec![submit_info];
-        self.ctx.queues().submit(&QueueFlag::Transfer,  submit_infos.as_slice(), Some(&fence));
+        self.ctx.queues().submit(&QueueFlag::Transfer, submit_infos.as_slice(), Some(&fence));
         fence.wait();
 
         let command_buffer = CommandBuffer::new(self.ctx.clone(), &QueueFlag::Graphic)?;

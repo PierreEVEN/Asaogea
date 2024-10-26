@@ -1,13 +1,12 @@
-use std::mem::MaybeUninit;
 use std::sync::{Arc};
 use anyhow::{anyhow, Error};
-use glam::Vec4;
 use vulkanalia::vk;
-use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, KhrSwapchainExtension};
+use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, ImageView, KhrSwapchainExtension};
 use types::resource_handle::{Resource, ResourceHandle};
 use types::rwarc::RwArc;
 use crate::application::gfx::device::{DeviceCtx, Fence, QueueFlag, SwapchainSupport};
-use crate::application::gfx::frame_graph::frame_graph::{AttachmentSource, ClearValues, FrameGraphInstance, RenderPassAttachment, RenderPassCreateInfos};
+use crate::application::gfx::frame_graph::frame_graph::{FrameGraphInstance, FrameGraphTargetInstance};
+use crate::application::gfx::frame_graph::frame_graph_definition::FrameGraph;
 use crate::application::window::WindowCtx;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
@@ -19,8 +18,7 @@ fn get_swapchain_surface_format(swapchain_support: &SwapchainSupport) -> vk::Sur
         .iter()
         .cloned()
         .find(|f| {
-            f.format == vk::Format::B8G8R8A8_SRGB
-                && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+            f.format == vk::Format::B8G8R8A8_SRGB && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
         })
         .unwrap_or_else(|| swapchain_support.formats[0])
 }
@@ -34,20 +32,19 @@ pub struct Swapchain {
     image_available_semaphores: Vec<vk::Semaphore>,
     in_flight_fences: Vec<Arc<Fence>>,
     images_in_flight: RwArc<Vec<Arc<Fence>>>,
-    frame_graph: Option<FrameGraphInstance>,
+    frame_graph: Resource<FrameGraphInstance>,
     frame: usize,
 
     device: DeviceCtx,
     window: WindowCtx,
 
     surface_format: vk::Format,
-    total_images_count: u32,
 
-    ctx: MaybeUninit<SwapchainCtx>,
+    self_ctx: SwapchainCtx,
 }
 
 impl Swapchain {
-    pub fn new(device: DeviceCtx, window_ctx: WindowCtx, frame_graph: FrameGraphInstance) -> Result<Resource<Self>, Error> {
+    pub fn new(device: DeviceCtx, window_ctx: WindowCtx) -> Result<Resource<Self>, Error> {
         let swapchain_support = SwapchainSupport::get(
             device.get().instance(),
             window_ctx.surface().ptr(),
@@ -61,20 +58,21 @@ impl Swapchain {
             image_available_semaphores: vec![],
             in_flight_fences: vec![],
             images_in_flight: RwArc::new(vec![]),
-            frame_graph: None,
+            frame_graph: Resource::default(),
             frame: Default::default(),
             device,
             window: window_ctx,
             surface_format: surface_format.format,
-            total_images_count: 0,
-            ctx: MaybeUninit::uninit(),
+            self_ctx: SwapchainCtx::default(),
             swapchain_extent: Default::default(),
         });
-        swapchain.ctx = MaybeUninit::new(swapchain.handle());
-
-        swapchain.frame_graph = Some(frame_graph);
-        swapchain.create_or_recreate_swapchain()?;
+        swapchain.self_ctx = swapchain.handle();
         Ok(swapchain)
+    }
+
+    pub fn create_renderer(&mut self, frame_graph: FrameGraph) {
+        self.create_or_recreate_swapchain().unwrap();
+        self.frame_graph = FrameGraphInstance::new(self.device.clone(), frame_graph, FrameGraphTargetInstance::Swapchain(self.self_ctx.clone()));
     }
 
     pub fn create_or_recreate_swapchain(&mut self) -> Result<(), Error> {
@@ -105,7 +103,6 @@ impl Swapchain {
         } else {
             vk::SharingMode::EXCLUSIVE
         };
-        self.total_images_count = image_count;
         let info = vk::SwapchainCreateInfoKHR::builder()
             .surface(*self.window.surface().ptr())
             .min_image_count(image_count)
@@ -129,7 +126,7 @@ impl Swapchain {
             for _ in 0..MAX_FRAMES_IN_FLIGHT {
                 let semaphore = self.device.device().create_semaphore(&semaphore_info, None)?;
                 self.image_available_semaphores.push(semaphore);
-                let device = self.ctx().device.clone();
+                let device = self.device().clone();
                 self.in_flight_fences.push(Arc::new(Fence::new_signaled(device)));
             }
         }
@@ -153,7 +150,7 @@ impl Swapchain {
                 let info = vk::ImageViewCreateInfo::builder()
                     .image(*i)
                     .view_type(vk::ImageViewType::_2D)
-                    .format(Self::get_swapchain_surface_format(&swapchain_support).format)
+                    .format(get_swapchain_surface_format(&swapchain_support).format)
                     .components(components)
                     .subresource_range(subresource_range);
                 unsafe { self.device.device().create_image_view(&info, None) }
@@ -165,7 +162,9 @@ impl Swapchain {
             .map(|_| Arc::new(Fence::default()))
             .collect();
 
-        self.frame_graph.as_ref().unwrap().resize(self.swapchain_extent.width as usize, self.swapchain_extent.height as usize, &self.swapchain_image_views);
+        if self.frame_graph.is_valid() {
+            self.frame_graph.resize(self.swapchain_extent.width as usize, self.swapchain_extent.height as usize, &self.swapchain_image_views);
+        }
         Ok(())
     }
 
@@ -177,6 +176,9 @@ impl Swapchain {
             .unwrap_or(vk::PresentModeKHR::FIFO)
     }
 
+    pub fn get_swapchain_images(&self) -> &Vec<ImageView> {
+        &self.swapchain_image_views
+    }
 
     fn destroy_swapchain(&mut self) -> Result<(), Error> {
         self.device.wait_idle();
@@ -210,24 +212,29 @@ impl Swapchain {
 
         self.images_in_flight.write()[image_index] = self.in_flight_fences[frame].clone();
 
-        self.frame_graph.as_ref().unwrap().draw(frame, SwapchainImage {
-            image_view: self.swapchain_image_views[frame],
-            wait_semaphore: self.image_available_semaphores[frame],
-            work_finished_fence: *self.in_flight_fences[frame].ptr(),
-        });
+        self.frame_graph.draw(frame);
 
-        let changed = self.frame_graph.as_ref().unwrap().present_to_swapchain(frame, &swapchain);
 
-        if changed {
+
+
+        let signal_semaphores = vec![self.frame_graph.present_pass().render_finished_semaphore(image_index)];
+        let swapchains = vec![swapchain];
+        let image_indices = vec![image_index as u32];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(signal_semaphores.as_slice())
+            .swapchains(swapchains.as_slice())
+            .image_indices(image_indices.as_slice())
+            .build();
+
+        let result = self.device.queues().present(&present_info);
+
+        if result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR) {
             return Ok(true);
         } else if let Err(e) = result {
             return Err(anyhow!("Failed to present image : {}", e));
         }
         self.frame = (frame + 1) % MAX_FRAMES_IN_FLIGHT;
         Ok(false)
-    }
-    pub fn ctx(&self) -> SwapchainCtx {
-        unsafe { self.ctx.assume_init_ref().clone() }
     }
     pub fn device(&self) -> &DeviceCtx {
         &self.device

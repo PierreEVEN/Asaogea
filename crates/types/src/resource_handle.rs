@@ -8,11 +8,22 @@ pub struct Resource<T> {
     alloc: ResourceAlloc,
 }
 
+impl<T> Default for Resource<T> {
+    fn default() -> Self {
+        Self {
+            data: null(),
+            alloc: ResourceAlloc::default(),
+        }
+    }
+}
+
 impl<T> Drop for Resource<T> {
     fn drop(&mut self) {
-        unsafe {
-            *(self.alloc.valid as *mut bool) = false;
-            drop(Box::from_raw(self.data as *mut T));
+        if !self.data.is_null() {
+            unsafe {
+                *(self.alloc.valid as *mut bool) = false;
+                drop(Box::from_raw(self.data as *mut T));
+            }
         }
     }
 }
@@ -28,7 +39,12 @@ impl<T> Resource<T> {
         }
     }
 
+    pub fn is_valid(&self) -> bool {
+        !self.data.is_null()
+    }
+
     pub fn handle(&self) -> ResourceHandle<T> {
+        assert!(!self.data.is_null(), "Cannot get handle of a null Resource<{}>", type_name::<T>());
         ResourceHandle {
             ptr: self.data,
             alloc: self.alloc.clone(),
@@ -36,6 +52,7 @@ impl<T> Resource<T> {
     }
 
     pub fn handle_mut(&self) -> ResourceHandleMut<T> {
+        assert!(!self.data.is_null(), "Cannot get handle of a null Resource<{}>", type_name::<T>());
         ResourceHandleMut {
             ptr: self.data,
             alloc: self.alloc.clone(),
@@ -48,12 +65,14 @@ impl<T> Deref for Resource<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
+        assert!(!self.data.is_null(), "Resource<{}> is null", type_name::<T>());
         unsafe { self.data.as_ref().unwrap() }
     }
 }
 
 impl<T> DerefMut for Resource<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        assert!(!self.data.is_null(), "Resource<{}> is null", type_name::<T>());
         unsafe { &mut *self.data.cast_mut() }
     }
 }
@@ -128,10 +147,7 @@ impl<T> Default for ResourceHandleMut<T> {
     fn default() -> Self {
         Self {
             ptr: null(),
-            alloc: ResourceAlloc {
-                count: Box::leak(Box::new(AtomicUsize::new(1))),
-                valid: Box::leak(Box::new(false)),
-            },
+            alloc: ResourceAlloc::default()
         }
     }
 }
@@ -173,6 +189,15 @@ impl Clone for ResourceAlloc {
         Self {
             count: self.count,
             valid: self.valid,
+        }
+    }
+}
+
+impl Default for ResourceAlloc {
+    fn default() -> Self {
+        Self {
+            count: Box::leak(Box::new(AtomicUsize::new(1))),
+            valid: Box::leak(Box::new(false)),
         }
     }
 }

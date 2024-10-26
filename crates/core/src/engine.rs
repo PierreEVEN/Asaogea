@@ -7,6 +7,7 @@ use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
 use types::resource_handle::{Resource, ResourceHandle};
+use crate::application::gfx::frame_graph::frame_graph_definition::{FrameGraph, RenderPass, RenderPassAttachment, RenderTarget};
 use crate::application::gfx::instance::{GfxConfig, Instance, InstanceCtx};
 use crate::options::WindowOptions;
 use crate::application::window::{AppWindow, WindowCtx};
@@ -57,10 +58,36 @@ impl Engine {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
         let mut window = AppWindow::new(self.ctx(), event_loop, options)?;
-        let device = self.data.instance.as_mut().unwrap().get_or_create_device(window.ctx());
-        window.init_swapchain(device)?;
+        let device = self.data.instance.as_mut().unwrap().get_or_create_device(window.handle());
+
+        let forward_pass = RenderPass {
+            color_attachments: vec![RenderPassAttachment {
+                clear_value: Default::default(),
+                source: RenderTarget::Internal(vk::Format::R16G16B16A16_SFLOAT)
+            }],
+            depth_attachment: Some(RenderPassAttachment {
+                clear_value: Default::default(),
+                source: RenderTarget::Internal(vk::Format::D32_SFLOAT)
+            }),
+            children: vec![],
+        };
+
+        let present_pass = RenderPass {
+            color_attachments: vec![RenderPassAttachment {
+                clear_value: Default::default(),
+                source: RenderTarget::Window(window.handle())
+            }],
+            depth_attachment: None,
+            children: vec![forward_pass],
+        };
+
+        let frame_graph = FrameGraph {
+            persent_pass: present_pass,
+        };
+
+        window.init_swapchain(device, frame_graph)?;
         let handle = window.handle();
-        self.data.windows.insert(window.ctx().id()?, window);
+        self.data.windows.insert(window.handle().id()?, window);
         Ok(handle)
     }
 

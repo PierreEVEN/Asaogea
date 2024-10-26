@@ -3,7 +3,7 @@ use crate::application::gfx::resources::shader_module::ShaderStage;
 use anyhow::Error;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, ShaderStageFlags};
-use crate::application::gfx::frame_graph::frame_graph::RenderPass;
+use crate::application::gfx::frame_graph::frame_graph::RenderPassObject;
 
 pub struct Pipeline {
     pipeline_layout: vk::PipelineLayout,
@@ -31,7 +31,7 @@ pub struct PipelineConfig {
 }
 
 impl Pipeline {
-    pub fn new(ctx: DeviceCtx, render_pass: &RenderPass, stages: Vec<ShaderStage>, config: &PipelineConfig) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceCtx, render_pass: &RenderPassObject, stages: Vec<ShaderStage>, config: &PipelineConfig) -> Result<Self, Error> {
         let mut push_constant_ranges = vec![];
         for stage in &stages {
             if let Some(pc) = stage.infos().push_constant_size {
@@ -100,7 +100,7 @@ impl Pipeline {
 
         let mut color_blend_attachment = Vec::<vk::PipelineColorBlendAttachmentState>::new();
 
-        for _ in 0..render_pass.create_infos.color_attachments.len()
+        for _ in 0..render_pass.base().color_attachments.len()
         {
             color_blend_attachment.push(vk::PipelineColorBlendAttachmentState::builder()
                 .blend_enable(config.alpha_mode != AlphaMode::Opaque)
@@ -216,7 +216,7 @@ impl Pipeline {
             .color_blend_state(&color_blend_state)
             .dynamic_state(&dynamic_states)
             .layout(pipeline_layout)
-            .render_pass(render_pass.render_pass)
+            .render_pass(*render_pass.ptr())
             .subpass(0)
             .build();
 

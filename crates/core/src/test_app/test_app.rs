@@ -19,8 +19,9 @@ use tracing::info;
 use vulkanalia::vk;
 use winit::keyboard::{Key, NamedKey, SmolStr};
 use job_sys::{Job, JobSystem};
+use types::resource_handle::Resource;
 use types::rwarc::RwArc;
-use crate::application::gfx::frame_graph::frame_graph::RenderPass;
+use crate::application::gfx::frame_graph::frame_graph::RenderPassObject;
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -72,7 +73,7 @@ pub struct TestApp {
     yaw: f32,
     speed: f32,
     last_mouse: DVec2,
-    _images: Vec<Image>,
+    _images: Vec<Resource<Image>>,
     _sampler: Sampler,
 }
 
@@ -82,7 +83,7 @@ pub struct Pc {
 }
 
 impl TestApp {
-    pub fn new(ctx: SwapchainCtx, render_pass: &RenderPass) -> Result<Self, Error> {
+    pub fn new(ctx: SwapchainCtx, render_pass: &RenderPassObject) -> Result<Self, Error> {
         let mut compiler = HlslCompiler::new()?;
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
         let fragment = compiler.compile(&RawShaderDefinition::new("imgui-fragment", "ps_6_0", FRAGMENT.to_string()))?;

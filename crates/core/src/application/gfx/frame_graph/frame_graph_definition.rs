@@ -1,7 +1,7 @@
 use vulkanalia::vk;
 use types::resource_handle::ResourceHandle;
 use crate::application::gfx::resources::image::Image;
-use crate::application::gfx::surface::SurfaceCtx;
+use crate::application::window::WindowCtx;
 
 #[derive(Copy, Clone, Default)]
 pub enum ClearValues {
@@ -13,12 +13,12 @@ pub enum ClearValues {
 
 #[derive(Clone)]
 pub struct FrameGraph {
-    root: RenderPass
+    pub persent_pass: RenderPass
 }
 
 #[derive(Clone)]
 pub enum RenderTarget {
-    Surface(SurfaceCtx),
+    Window(WindowCtx),
     Image(ResourceHandle<Image>),
     Internal(vk::Format),
 }

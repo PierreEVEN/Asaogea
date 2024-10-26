@@ -16,7 +16,8 @@ use std::ptr::null_mut;
 use vulkanalia::vk;
 use vulkanalia::vk::ImageType;
 use winit::event::MouseButton;
-use crate::application::gfx::frame_graph::frame_graph::RenderPass;
+use types::resource_handle::Resource;
+use crate::application::gfx::frame_graph::frame_graph::RenderPassObject;
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -62,7 +63,7 @@ pub struct ImGui {
     mesh: DynamicMesh,
     pipeline: Pipeline,
     descriptor_sets: DescriptorSets,
-    _font_texture: Image,
+    _font_texture: Resource<Image>,
     _sampler: Sampler,
     ctx: SwapchainCtx,
 }
@@ -75,7 +76,7 @@ pub struct ImGuiPushConstants {
 }
 
 impl ImGui {
-    pub fn new(ctx: SwapchainCtx, render_pass: &RenderPass) -> Result<Self, Error> {
+    pub fn new(ctx: SwapchainCtx, render_pass: &RenderPassObject) -> Result<Self, Error> {
         let mut compiler = HlslCompiler::new()?;
 
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
