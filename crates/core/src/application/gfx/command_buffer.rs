@@ -1,7 +1,7 @@
 use crate::application::gfx::device::{DeviceCtx};
 use crate::application::gfx::resources::buffer::BufferMemory;
 use crate::application::gfx::resources::descriptor_sets::DescriptorSets;
-use crate::application::gfx::resources::mesh::DynamicMesh;
+use crate::application::gfx::resources::mesh::Mesh;
 use crate::application::gfx::resources::pipeline::Pipeline;
 use anyhow::{anyhow, Error};
 use std::collections::HashMap;
@@ -153,7 +153,7 @@ impl CommandBuffer {
         }
     }
 
-    pub fn draw_mesh(&self, mesh: &DynamicMesh, _instance_count: u32, _first_instance: u32) {
+    pub fn draw_mesh(&self, mesh: &Mesh, _instance_count: u32, _first_instance: u32) {
         unsafe {
             let device = self.ctx.device();
             let vertex_buffer = if let Some(vertex_buffer) = mesh.vertex_buffer() { vertex_buffer } else { return; };
@@ -188,7 +188,7 @@ impl CommandBuffer {
         }
     }
 
-    pub fn draw_mesh_advanced(&self, mesh: &DynamicMesh, first_index: u32, vertex_offset: u32, index_count: u32, instance_count: u32, first_instance: u32) {
+    pub fn draw_mesh_advanced(&self, mesh: &Mesh, first_index: u32, vertex_offset: u32, index_count: u32, instance_count: u32, first_instance: u32) {
         unsafe {
             let vertex_buffer = if let Some(vertex_buffer) = mesh.vertex_buffer() { vertex_buffer } else { return; };
             self.ctx.device().cmd_bind_vertex_buffers(

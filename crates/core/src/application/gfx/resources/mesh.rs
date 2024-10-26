@@ -1,14 +1,15 @@
 use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferCreateInfo, BufferMemory};
+use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferCreateInfo, BufferMemory, BufferType};
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
 
-pub struct DynamicMesh {
+pub struct Mesh {
     vertex_buffer: Option<Buffer>,
     index_buffer: Option<Buffer>,
     vertex_structure_size: usize,
     index_type: IndexBufferType,
     ctx: DeviceCtx,
+    mesh_type: BufferType
 }
 
 #[derive(Copy, Clone, Default)]
@@ -19,14 +20,15 @@ pub enum IndexBufferType {
     Uint32 = 4,
 }
 
-impl DynamicMesh {
-    pub fn new(vertex_structure_size: usize, ctx: DeviceCtx) -> Result<Self, Error> {
+impl Mesh {
+    pub fn new(vertex_structure_size: usize, ctx: DeviceCtx, mesh_type: BufferType) -> Result<Self, Error> {
         Ok(Self {
             vertex_buffer: None,
             index_buffer: None,
             vertex_structure_size,
             index_type: IndexBufferType::Uint32,
             ctx,
+            mesh_type,
         })
     }
 
@@ -51,7 +53,7 @@ impl DynamicMesh {
             self.index_buffer = Some(Buffer::from_buffer_memory(self.ctx.clone(), index_data, BufferCreateInfo {
                 usage: vk::BufferUsageFlags::INDEX_BUFFER,
                 access: BufferAccess::GpuOnly,
-                buffer_type: Default::default(),
+                buffer_type: self.mesh_type,
             })?);
         } else {
             let idx = self.index_buffer.as_mut().unwrap();
@@ -69,7 +71,7 @@ impl DynamicMesh {
             self.vertex_buffer = Some(Buffer::from_buffer_memory(self.ctx.clone(), vertex_data, BufferCreateInfo {
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                 access: BufferAccess::GpuOnly,
-                buffer_type: Default::default(),
+                buffer_type: self.mesh_type,
             })?);
         } else {
             let vtx = self.vertex_buffer.as_mut().unwrap();
@@ -88,7 +90,7 @@ impl DynamicMesh {
                 self.vertex_buffer = Some(Buffer::new(self.ctx.clone(), self.vertex_structure_size, vertex_count, BufferCreateInfo {
                     usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                     access: BufferAccess::GpuOnly,
-                    buffer_type: Default::default(),
+                    buffer_type: self.mesh_type,
                 })?);
             }
             Some(vtx) => {
@@ -104,7 +106,7 @@ impl DynamicMesh {
                 self.index_buffer = Some(Buffer::new(self.ctx.clone(), self.vertex_structure_size, index_count, BufferCreateInfo {
                     usage: vk::BufferUsageFlags::INDEX_BUFFER,
                     access: BufferAccess::GpuOnly,
-                    buffer_type: Default::default(),
+                    buffer_type: self.mesh_type,
                 })?);
             }
             Some(idx) => {
@@ -135,7 +137,7 @@ impl DynamicMesh {
     }
 }
 
-impl Drop for DynamicMesh {
+impl Drop for Mesh {
     fn drop(&mut self) {
         self.vertex_buffer = None;
         self.index_buffer = None;

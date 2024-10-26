@@ -1,8 +1,8 @@
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::application::gfx::resources::buffer::BufferMemory;
+use crate::application::gfx::resources::buffer::{BufferMemory, BufferType};
 use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
-use crate::application::gfx::resources::mesh::DynamicMesh;
+use crate::application::gfx::resources::mesh::Mesh;
 use crate::application::gfx::resources::pipeline::{AlphaMode, Pipeline, PipelineConfig};
 use crate::application::gfx::resources::sampler::Sampler;
 use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
@@ -65,7 +65,7 @@ float4 main(VsToFs input) : SV_TARGET {
 
 pub struct TestApp {
     pipeline: Pipeline,
-    meshes: Vec<DynamicMesh>,
+    meshes: Vec<Mesh>,
     ctx: SwapchainCtx,
     descriptor_sets: Vec<DescriptorSets>,
     camera: Camera,
@@ -172,7 +172,7 @@ impl TestApp {
 
         for mesh in gltf.write().get_meshes()? {
             for primitive in mesh {
-                let mut temp_mesh = DynamicMesh::new(size_of::<Vec3>(), ctx.device().clone())?;
+                let mut temp_mesh = Mesh::new(size_of::<Vec3>(), ctx.device().clone(), BufferType::Immutable)?;
                 if let Some(index_buffer) = &primitive.index {
                     temp_mesh.set_indexed_vertices(0, &primitive.vertex, 0, index_buffer)?;
                 }

@@ -22,6 +22,7 @@ pub struct Engine {
 
     delta_time: TimeDelta,
     current_frame: usize,
+    current_rendering_window: WindowId,
 }
 
 pub type EngineCtx = ResourceHandle<Engine>;
@@ -40,6 +41,7 @@ impl Engine {
             self_ref: Default::default(),
             delta_time: Default::default(),
             current_frame: 0,
+            current_rendering_window: WindowId::dummy(),
         });
         data.self_ref = data.handle();
         data.instance = Instance::new(data.handle(), &mut config)?;
@@ -56,6 +58,10 @@ impl Engine {
         Ok(event_loop.run_app(self)?)
     }
 
+    pub fn params(&self) -> &Options {
+        &self.options
+    }
+    
     pub fn create_window(&mut self, event_loop: &ActiveEventLoop, options: &WindowOptions) -> Result<WindowCtx, Error> {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
@@ -97,10 +103,15 @@ impl Engine {
         self.current_frame
     }
 
+    pub fn current_rendering_window(&self) -> WindowId {
+        self.current_rendering_window
+    }
+    
     pub fn render_frame(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
         self.delta_time.next();
         // Draw all windows (sequentially, no need to parallelize this work for now)
-        for window in self.windows.values_mut() {
+        for (id, window) in &mut self.windows {
+            self.current_rendering_window = *id;
             if let Err(err) = window.window_event(event_loop, event.clone()) { error!("Event failed : {}", err) }
         }
 

@@ -1,8 +1,8 @@
 use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::application::gfx::resources::buffer::BufferMemory;
+use crate::application::gfx::resources::buffer::{BufferMemory, BufferType};
 use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
-use crate::application::gfx::resources::mesh::DynamicMesh;
+use crate::application::gfx::resources::mesh::Mesh;
 use crate::application::gfx::resources::pipeline::AlphaMode;
 use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
 use crate::application::gfx::resources::sampler::Sampler;
@@ -61,7 +61,7 @@ float4 main(VsToFs input) : SV_TARGET {
 
 pub struct ImGui {
     _compiler: HlslCompiler,
-    mesh: RwLock<DynamicMesh>,
+    mesh: RwLock<Mesh>,
     pipeline: Pipeline,
     descriptor_sets: DescriptorSets,
     _font_texture: Resource<Image>,
@@ -189,11 +189,11 @@ impl ImGui {
             depth: 1,
             mips_levels: 1,
             is_depth: false,
-        }).unwrap();
+        })?;
 
         font_texture.set_data(&BufferMemory::from_raw(pixels as *const u8, 1, data_size as usize))?;
 
-        let mesh = DynamicMesh::new(size_of::<ImDrawVert>(), ctx.device().clone())?;
+        let mesh = Mesh::new(size_of::<ImDrawVert>(), ctx.device().clone(), BufferType::Immediate)?;
 
         //unsafe { (&mut *io.Fonts).TexID = font_texture.__static_view_handle() as ImTextureID; }
 

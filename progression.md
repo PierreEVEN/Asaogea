@@ -1,6 +1,6 @@
-# TODOLIST
+# Progression
 
-## ImGui
+## First window with imgui
 
 - [x] Instance
 - [x] Device
@@ -22,12 +22,15 @@
 - [x] Mesh
 - [x] Window events
 
-## Rendering
+## 3D model loading and rendering
 
 - [x] Camera
 - [x] Gltf
-
-
-- [ ] Job system
-- [ ] Material (point to an existing pipeline + descriptor sets)
-- [ ] Parallel resource loading
+- [x] Job system
+- [x] Material (point to an existing pipeline + descriptor sets)
+- [x] Parallel resource loading
+- [x] Multiple windows
+- [x] Multiple render pass
+- [x] Render graph
+- [x] Resource garbage collector
+- [x] Dynamic / static buffers

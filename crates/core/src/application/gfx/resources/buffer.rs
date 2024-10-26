@@ -1,10 +1,10 @@
-use crate::application::gfx::device::DeviceCtx;
+use crate::application::gfx::device::{DeviceCtx};
 use anyhow::{anyhow, Error};
-use std::ops::Deref;
 use std::ptr::slice_from_raw_parts;
 use vulkanalia::vk;
 use vulkanalia::vk::{HasBuilder};
 use vulkanalia_vma::{Alloc, AllocationCreateFlags};
+use types::resource_handle::Resource;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum BufferAccess
@@ -22,15 +22,37 @@ pub enum BufferAccess
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
 pub enum BufferType
 {
-    // No allowed updates
-    Immutable,
-    // Pretty never updated. Updating data would cause some freezes
+    // No updates allowed
     #[default]
+    Immutable,
+    // Pretty never updated. Updating data would cause some freezes. Low memory footprint
     Static,
     // Data is stored internally, then automatically submitted. Can lead to a memory overhead depending on the get size.
     Dynamic,
     // Data need to be submitted every frames
     Immediate,
+}
+
+struct BufferResource {
+    buffer: vk::Buffer,
+    allocation: vulkanalia_vma::Allocation,
+    ctx: DeviceCtx,
+}
+
+impl BufferResource {
+    pub fn new(buffer: vk::Buffer, allocation: vulkanalia_vma::Allocation, ctx: DeviceCtx) -> Self {
+        Self {
+            buffer,
+            allocation,
+            ctx,
+        }
+    }
+}
+
+impl Drop for BufferResource {
+    fn drop(&mut self) {
+        unsafe { self.ctx.allocator().destroy_buffer(self.buffer, self.allocation) }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -41,8 +63,7 @@ pub struct BufferCreateInfo {
 }
 
 pub struct Buffer {
-    buffer: Option<vk::Buffer>,
-    buffer_memory: Option<vulkanalia_vma::Allocation>,
+    resource: Resource<Vec<BufferResource>>,
     elements: usize,
     stride: usize,
     create_infos: BufferCreateInfo,
@@ -53,8 +74,7 @@ impl Buffer {
     pub fn new(ctx: DeviceCtx, stride: usize, elements: usize, create_infos: BufferCreateInfo) -> Result<Self, Error> {
         assert!(stride > 0);
         let mut buffer = Self {
-            buffer: None,
-            buffer_memory: None,
+            resource: Resource::default(),
             elements,
             stride,
             create_infos,
@@ -70,25 +90,15 @@ impl Buffer {
         Ok(buffer)
     }
 
-    pub fn resize(&mut self, mut new_element_count: usize) -> Result<(), Error> {
+    pub fn resize(&mut self, new_element_count: usize) -> Result<(), Error> {
         if let BufferType::Immutable = self.create_infos.buffer_type {
             return Err(anyhow!("Cannot resize an immutable buffer"));
-        }
-        
-        if new_element_count == 0 {
-            new_element_count = 1;
         }
         if new_element_count == self.elements {
             return Ok(());
         }
-
-        // @TODO implement dynamic buffers
-        self.ctx.wait_idle();
-
-        self.destroy();
         self.elements = new_element_count;
-        self.create()?;
-        Ok(())
+        self.create()
     }
 
     pub fn set_data(&mut self, start_offset: usize, data: &BufferMemory) -> Result<(), Error> {
@@ -96,9 +106,19 @@ impl Buffer {
             return Err(anyhow!("buffer is to small : size={}, expected={}", self.size(), start_offset + data.get_size()));
         }
         unsafe {
-            let mapped_memory = self.ctx.allocator().map_memory(self.buffer_memory.unwrap())?;
+            let resource = match self.create_infos.buffer_type {
+                BufferType::Immutable | BufferType::Static => {
+                    self.resource[0].allocation
+                }
+                BufferType::Immediate | BufferType::Dynamic => {
+                    let frame = self.ctx.instance().engine().current_frame();
+                    self.resource[frame].allocation
+                }
+            };
+
+            let mapped_memory = self.ctx.allocator().map_memory(resource)?;
             data.get_ptr(0).copy_to(mapped_memory.add(start_offset), data.get_size());
-            self.ctx.allocator().unmap_memory(self.buffer_memory.unwrap());
+            self.ctx.allocator().unmap_memory(resource);
         }
         Ok(())
     }
@@ -112,10 +132,29 @@ impl Buffer {
         self.stride
     }
     pub fn ptr(&self) -> Result<&vk::Buffer, Error> {
-        self.buffer.as_ref().ok_or(anyhow!("Buffer is null"))
+        if !self.resource.is_valid() {
+            return Err(anyhow!("Buffer is null"));
+        }
+
+        match self.create_infos.buffer_type {
+            BufferType::Immutable | BufferType::Static => {
+                Ok(&self.resource[0].buffer)
+            }
+            BufferType::Immediate | BufferType::Dynamic => {
+                let frame = self.ctx.instance().engine().current_frame();
+                Ok(&self.resource[frame].buffer)
+            }
+        }
+    }
+
+    pub fn queue_resource_for_destruction(&mut self) {
+        if self.resource.is_valid() {
+            self.ctx.queue_resource_cleanup(self.resource.take());
+        }
     }
 
     pub fn create(&mut self) -> Result<(), Error> {
+        self.queue_resource_for_destruction();
         if self.elements == 0 {
             return Ok(());
         }
@@ -141,31 +180,26 @@ impl Buffer {
             }
         }
 
-        let (buffer, buffer_memory) = unsafe { self.ctx.allocator().create_buffer(buffer_info, &options) }?;
-
-        self.buffer = Some(buffer);
-        self.buffer_memory = Some(buffer_memory);
-        Ok(())
-    }
-
-    fn destroy(&self) {
-        if let Some(buffer) = self.buffer {
-            unsafe { self.ctx.allocator().destroy_buffer(buffer, self.buffer_memory.unwrap()) }
+        match self.create_infos.buffer_type {
+            BufferType::Immutable | BufferType::Static => {
+                let (buffer, buffer_memory) = unsafe { self.ctx.allocator().create_buffer(buffer_info, &options) }?;
+                self.resource = Resource::new(vec![BufferResource::new(buffer, buffer_memory, self.ctx.clone())])
+            }
+            BufferType::Immediate | BufferType::Dynamic => {
+                self.resource = Resource::new(Vec::new());
+                for _ in 0..self.ctx.instance().engine().params().rendering.image_count {
+                    let (buffer, buffer_memory) = unsafe { self.ctx.allocator().create_buffer(buffer_info, &options) }?;
+                    self.resource.push(BufferResource::new(buffer, buffer_memory, self.ctx.clone()))
+                }
+            }
         }
-    }
-}
-
-impl Deref for Buffer {
-    type Target = vk::Buffer;
-
-    fn deref(&self) -> &Self::Target {
-        self.buffer.as_ref().expect("Buffer have been destroyed !")
+        Ok(())
     }
 }
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        self.destroy();
+        self.queue_resource_for_destruction();
     }
 }
 

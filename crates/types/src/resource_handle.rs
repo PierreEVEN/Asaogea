@@ -42,6 +42,7 @@ impl<T> Resource<T> {
     pub fn take(&mut self) -> Box<T> {
         assert!(!self.data.is_null(), "Cannot get handle of a null Resource<{}>", type_name::<T>());
         let data = unsafe { Box::from_raw(self.data.cast_mut()) };
+        self.data = null();
         unsafe {
             *(self.alloc.valid as *mut bool) = false;
             self.alloc = ResourceAlloc::default();

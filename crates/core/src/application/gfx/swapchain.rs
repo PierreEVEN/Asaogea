@@ -1,4 +1,3 @@
-use std::sync::RwLock;
 use crate::application::gfx::device::{DeviceCtx, Fence};
 use crate::application::gfx::frame_graph::frame_graph_instance::{FrameGraphInstance, FrameGraphTargetInstance};
 use crate::application::gfx::frame_graph::frame_graph_definition::FrameGraph;
@@ -10,8 +9,6 @@ use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, ImageView,
 use crate::application::gfx::imgui::ImGui;
 use crate::application::gfx::physical_device::SwapchainSupport;
 use crate::application::gfx::queues::QueueFlag;
-
-const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 pub type SwapchainCtx = ResourceHandle<Swapchain>;
 
@@ -25,8 +22,6 @@ fn get_swapchain_surface_format(swapchain_support: &SwapchainSupport) -> vk::Sur
         .unwrap_or_else(|| swapchain_support.formats[0])
 }
 
-pub trait FrameResource {}
-
 pub struct Swapchain {
     swapchain: Option<vk::SwapchainKHR>,
 
@@ -39,7 +34,6 @@ pub struct Swapchain {
     in_flight_fences: Vec<Resource<Fence>>,
 
     frame_graph: Resource<FrameGraphInstance>,
-    current_frame: usize,
 
     device: DeviceCtx,
     window: WindowCtx,
@@ -47,8 +41,6 @@ pub struct Swapchain {
     surface_format: vk::Format,
 
     self_ctx: SwapchainCtx,
-
-    pending_kill_resources: RwLock<Vec<Vec<Box<dyn FrameResource>>>>,
 
     pub imgui: Option<ImGui>,
 }
@@ -68,12 +60,10 @@ impl Swapchain {
             image_available_semaphores: vec![],
             in_flight_fences: vec![],
             frame_graph: Resource::default(),
-            current_frame: Default::default(),
             device,
             window: window_ctx,
             surface_format: surface_format.format,
             self_ctx: SwapchainCtx::default(),
-            pending_kill_resources: Default::default(),
             imgui: None,
         });
         swapchain.self_ctx = swapchain.handle();
@@ -159,10 +149,7 @@ impl Swapchain {
             .collect::<Result<Vec<_>, _>>()?;
 
         let semaphore_info = vk::SemaphoreCreateInfo::builder();
-        let mut pending_kill_resources = self.pending_kill_resources.write().unwrap();
-        pending_kill_resources.clear();
-        for _ in 0..MAX_FRAMES_IN_FLIGHT {
-            pending_kill_resources.push(Vec::default());
+        for _ in 0..self.window.engine().params().rendering.image_count {
             unsafe {
                 let semaphore = self.device.device().create_semaphore(&semaphore_info, None)?;
                 self.image_available_semaphores.push(Resource::new(semaphore));
@@ -170,7 +157,7 @@ impl Swapchain {
                 self.in_flight_fences.push(Resource::new(Fence::new_signaled(device)));
             }
         }
-        
+
         if self.frame_graph.is_valid() {
             self.frame_graph.resize();
         }
@@ -226,14 +213,15 @@ impl Swapchain {
     }
 
     fn render_internal(&mut self) -> Result<bool, Error> {
-        let current_frame = self.current_frame;
+        let current_frame = self.window.engine().current_frame();
         let swapchain = self.swapchain.ok_or(anyhow!("Swapchain is not valid. Maybe you forget to call Swapchain::create_or_recreate()"))?;
         let device = &self.device;
         let device_vulkan = device.device();
 
 
         self.in_flight_fences[current_frame].wait();
-        self.pending_kill_resources.write().unwrap()[current_frame].clear();
+
+        self.device.free_resources_for_window(self.window.id()?, current_frame);
 
         let result = unsafe { device_vulkan.acquire_next_image_khr(swapchain, u64::MAX, *self.image_available_semaphores[current_frame], vk::Fence::null()) };
         let image_index = match result {
@@ -261,7 +249,6 @@ impl Swapchain {
         } else if let Err(e) = result {
             return Err(anyhow!("Failed to present image : {}", e));
         }
-        self.current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
         Ok(false)
     }
     pub fn device(&self) -> &DeviceCtx {
@@ -271,11 +258,6 @@ impl Swapchain {
         &self.window
     }
     pub fn format(&self) -> vk::Format { self.surface_format }
-
-    pub fn queue_resource_cleanup<T: 'static + FrameResource>(&self, resource: Box<T>) {
-        let mut per_image = self.pending_kill_resources.write().unwrap();
-        per_image[self.current_frame].push(resource);
-    }
 }
 
 impl Drop for Swapchain {

@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::{HashMap};
 use std::mem::MaybeUninit;
 use std::rc::Rc;
@@ -6,6 +7,7 @@ use anyhow::{Error};
 use tracing::{info};
 use vulkanalia::{vk};
 use vulkanalia::vk::{DeviceV1_0, FenceCreateFlags, HasBuilder};
+use winit::window::WindowId;
 use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
 use crate::application::gfx::command_buffer::CommandPool;
 use crate::application::gfx::descriptor_pool::DescriptorPool;
@@ -70,7 +72,6 @@ impl Drop for Fence {
     }
 }
 
-
 pub type DeviceCtx = ResourceHandle<Device>;
 pub struct Device {
     instance: InstanceCtx,
@@ -82,6 +83,8 @@ pub struct Device {
     queues: Queues,
     render_passes: RwLock<Vec<Resource<RenderPassObject>>>,
     self_ref: DeviceCtx,
+
+    pending_kill_resources: RwLock<Vec<HashMap<WindowId, Vec<Box<dyn Any>>>>>,
 }
 
 impl Device {
@@ -141,7 +144,16 @@ impl Device {
             instance: ctx.clone(),
             render_passes: RwLock::new(vec![]),
             self_ref: Default::default(),
+            pending_kill_resources: Default::default(),
         });
+
+        {
+            let mut pending_kill_resources = device.pending_kill_resources.write().unwrap();
+            pending_kill_resources.clear();
+            for _ in 0..ctx.engine().params().rendering.image_count {
+                pending_kill_resources.push(HashMap::default());
+            }
+        }
         device.self_ref = device.handle();
         device.descriptor_pool().init(device.handle());
 
@@ -176,9 +188,9 @@ impl Device {
     }
 
     pub fn command_pool(&self, flags: &QueueFlag) -> &CommandPool {
-        self.command_pool.get(flags).expect("Command pool is not available").as_ref() 
+        self.command_pool.get(flags).expect("Command pool is not available").as_ref()
     }
-    
+
     pub fn queues(&self) -> &Queues {
         &self.queues
     }
@@ -194,6 +206,9 @@ impl Device {
         }
 
         unsafe { self.device().device_wait_idle().unwrap(); }
+        for image in &mut *self.pending_kill_resources.write().unwrap() {
+            image.clear()
+        }
         locks.clear();
     }
 
@@ -207,12 +222,24 @@ impl Device {
     pub fn ptr(&self) -> &vulkanalia::Device {
         &self.device
     }
+
+    pub fn queue_resource_cleanup<T: 'static>(&self, resource: Box<T>) {
+        let mut per_image = self.pending_kill_resources.write().unwrap();
+        let engine = self.instance.engine();
+        per_image[engine.current_frame()].entry(engine.current_rendering_window()).or_default().push(resource);
+    }
+
+    pub fn free_resources_for_window(&self, window: WindowId, frame: usize) {
+        let mut per_image = self.pending_kill_resources.write().unwrap();
+        per_image[frame].entry(window).or_default().clear();
+    }
 }
 
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
             self.render_passes.write().unwrap().clear();
+            self.pending_kill_resources.write().unwrap().clear();
             self.command_pool.clear();
             self.descriptor_pool.assume_init_read();
             self.allocator.assume_init_read();
