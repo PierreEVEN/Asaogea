@@ -1,4 +1,3 @@
-use std::time::Instant;
 use anyhow::{anyhow, Error};
 use tracing::{error};
 use winit::event::{WindowEvent};
@@ -15,14 +14,12 @@ use crate::options::{WindowOptions};
 
 pub struct AppWindow {
     minimized: bool,
-    last_frame_time: Instant,
 
     swapchain: Resource<Swapchain>,
     surface: Resource<Surface>,
     window: Option<Window>,
-    _engine: EngineCtx,
+    engine: EngineCtx,
     input_manager: InputManager,
-    pub delta_time: f64,
 
     self_ctx: ResourceHandle<AppWindow>,
 }
@@ -41,11 +38,9 @@ impl AppWindow {
             window: Some(window),
             surface,
             swapchain: Resource::default(),
-            _engine: ctx,
+            engine: ctx,
             input_manager: InputManager::default(),
-            delta_time: 0.0,
             minimized: false,
-            last_frame_time: Instant::now(),
             self_ctx: Default::default(),
         });
         window.self_ctx = window.handle();
@@ -58,23 +53,20 @@ impl AppWindow {
         Ok(())
     }
 
-    pub fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) -> Result<(), Error> {
+    pub fn engine(&self) -> &EngineCtx {
+        &self.engine
+    }
+    
+    pub fn window_event(&mut self, _: &ActiveEventLoop, event: WindowEvent) -> Result<(), Error> {
         self.input_manager.consume_event(&event);
         match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
             WindowEvent::RedrawRequested => {
-                let elapsed = self.last_frame_time.elapsed().as_secs_f64();
-                self.delta_time = elapsed;
-                self.last_frame_time = Instant::now();
                 if !self.minimized {
                     self.input_manager.begin_frame();
                     if let Err(err) = self.swapchain.render() {
                         error!("Failed to render frame : {}", err);
                     };
                 }
-                self.window.as_ref().unwrap().request_redraw();
             }
             WindowEvent::Resized(size) => {
                 self.minimized = size.width == 0 || size.height == 0;

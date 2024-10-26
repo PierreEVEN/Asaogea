@@ -200,7 +200,7 @@ impl TestApp {
 
         let w = self.ctx.window();
         let inputs = w.input_manager();
-        let ds = self.ctx.window().delta_time;
+        let ds = self.ctx.window().engine().delta_time().as_secs_f32();
 
         let speed = self.speed;
 
@@ -209,33 +209,33 @@ impl TestApp {
         self.speed *= inputs.scroll_delta().y as f32 * 0.25f32 + 1f32;
 
         if inputs.is_key_pressed(&Key::Named(NamedKey::PageUp)) {
-            self.speed += 50f32 * ds as f32;
+            self.speed += 50f32 * ds;
         };
 
         if inputs.is_key_pressed(&Key::Named(NamedKey::PageDown)) {
-            self.speed -= 50f32 * ds as f32;
+            self.speed -= 50f32 * ds;
             if self.speed < 0.1 {
                 self.speed = 0.1;
             }
         };
 
         if inputs.is_key_pressed(&Key::Character(SmolStr::from("z"))) {
-            delta += &Vec3::new(ds as f32 * speed, 0f32, 0f32);
+            delta += &Vec3::new(ds * speed, 0f32, 0f32);
         };
         if inputs.is_key_pressed(&Key::Character(SmolStr::from("s"))) {
-            delta += &Vec3::new(-ds as f32 * speed, 0f32, 0f32);
+            delta += &Vec3::new({ -ds } * speed, 0f32, 0f32);
         };
         if inputs.is_key_pressed(&Key::Character(SmolStr::from("q"))) {
-            delta += &Vec3::new(0f32, ds as f32 * speed, 0f32);
+            delta += &Vec3::new(0f32, ds * speed, 0f32);
         };
         if inputs.is_key_pressed(&Key::Character(SmolStr::from("d"))) {
-            delta += &Vec3::new(0f32, -ds as f32 * speed, 0f32);
+            delta += &Vec3::new(0f32, { -ds } * speed, 0f32);
         };
         if inputs.is_key_pressed(&Key::Named(NamedKey::Space)) {
-            delta += &Vec3::new(0f32, 0f32, ds as f32 * speed);
+            delta += &Vec3::new(0f32, 0f32, ds * speed);
         };
         if inputs.is_key_pressed(&Key::Named(NamedKey::Shift)) {
-            delta += Vec3::new(0f32, 0f32, -ds as f32 * speed);
+            delta += Vec3::new(0f32, 0f32, { -ds } * speed);
         };
         self.camera.set_position(self.camera.position() + self.camera.rotation().inverse().mul_vec3(delta));
 

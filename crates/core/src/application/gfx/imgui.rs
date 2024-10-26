@@ -9,7 +9,7 @@ use crate::application::gfx::resources::sampler::Sampler;
 use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
 use crate::application::gfx::swapchain::SwapchainCtx;
 use anyhow::Error;
-use imgui::sys::{igCreateContext, igEndFrame, igGetDrawData, igGetIO, igGetMainViewport, igGetStyle, igNewFrame, igRender, igShowDemoWindow, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImVec2, ImVec4};
+use imgui::sys::{igCreateContext, igEndFrame, igGetDrawData, igGetIO, igGetMainViewport, igGetStyle, igNewFrame, igRender, igSetCurrentContext, igShowDemoWindow, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImGuiContext, ImVec2, ImVec4};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::ffi::c_char;
 use std::ptr::null_mut;
@@ -67,6 +67,7 @@ pub struct ImGui {
     _font_texture: Resource<Image>,
     _sampler: Sampler,
     ctx: SwapchainCtx,
+    context: *const ImGuiContext
 }
 
 pub struct ImGuiPushConstants {
@@ -136,7 +137,8 @@ impl ImGui {
             line_width: 1.0,
         })?;
 
-        unsafe { igCreateContext(null_mut()) };
+        let context = unsafe { igCreateContext(null_mut()) };
+        unsafe { igSetCurrentContext(context) }
 
 
         let io = unsafe { &mut *igGetIO() };
@@ -211,17 +213,20 @@ impl ImGui {
             _font_texture: font_texture,
             _sampler: sampler,
             ctx,
+            context,
         })
     }
 
     pub fn render(&self, command_buffer: &CommandBuffer) -> Result<(), Error> {
+        unsafe { igSetCurrentContext(self.context.cast_mut()) }
+
         let io = unsafe { &mut *igGetIO() };
 
         let window_data = self.ctx.window();
 
         io.DisplaySize = ImVec2 { x: window_data.width()? as f32, y: window_data.height()? as f32 };
         io.DisplayFramebufferScale = ImVec2 { x: 1.0, y: 1.0 };
-        io.DeltaTime = f32::max(window_data.delta_time as f32, 0.0000000001f32);
+        io.DeltaTime = f32::max(window_data.engine().delta_time().as_secs_f32(), 0.0000000001f32);
 
         // Update mouse
         io.MouseDown[0] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Left);

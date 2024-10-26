@@ -1,13 +1,15 @@
 
 #[derive(Clone)]
-pub struct VulkanOptions {
+pub struct RenderingOption {
     pub validation_layers: bool,
+    pub image_count: usize
 }
 
-impl Default for VulkanOptions {
+impl Default for RenderingOption {
     fn default() -> Self {
         Self {
             validation_layers: true,
+            image_count: 2,
         }
     }
 }
@@ -27,6 +29,6 @@ impl Default for WindowOptions {
 
 #[derive(Default, Clone)]
 pub struct Options {
-    pub vulkan: VulkanOptions,
-    pub windows: WindowOptions,
+    pub rendering: RenderingOption,
+    pub main_window: WindowOptions,
 }

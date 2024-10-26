@@ -39,6 +39,16 @@ impl<T> Resource<T> {
         }
     }
 
+    pub fn take(&mut self) -> Box<T> {
+        assert!(!self.data.is_null(), "Cannot get handle of a null Resource<{}>", type_name::<T>());
+        let data = unsafe { Box::from_raw(self.data.cast_mut()) };
+        unsafe {
+            *(self.alloc.valid as *mut bool) = false;
+            self.alloc = ResourceAlloc::default();
+        }
+        data
+    }
+    
     pub fn is_valid(&self) -> bool {
         !self.data.is_null()
     }
@@ -178,7 +188,7 @@ impl<T> DerefMut for ResourceHandleMut<T> {
 }
 
 
-pub struct ResourceAlloc {
+struct ResourceAlloc {
     count: *const AtomicUsize,
     valid: *const bool,
 }

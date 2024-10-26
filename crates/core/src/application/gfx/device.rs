@@ -72,7 +72,6 @@ impl Drop for Fence {
 
 
 pub type DeviceCtx = ResourceHandle<Device>;
-
 pub struct Device {
     instance: InstanceCtx,
     physical_device: PhysicalDevice,
@@ -84,7 +83,6 @@ pub struct Device {
     render_passes: RwLock<Vec<Resource<RenderPassObject>>>,
     self_ref: DeviceCtx,
 }
-
 
 impl Device {
     pub fn new(ctx: InstanceCtx, surface: &SurfaceCtx, config: &GfxConfig) -> Result<Resource<Self>, Error> {
@@ -181,7 +179,6 @@ impl Device {
         self.command_pool.get(flags).expect("Command pool is not available").as_ref() 
     }
     
-
     pub fn queues(&self) -> &Queues {
         &self.queues
     }
