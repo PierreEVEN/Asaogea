@@ -7,8 +7,8 @@ use vulkanalia::{vk, Entry};
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::vk::{DebugUtilsMessengerEXT, DeviceV1_0, EntryV1_0, ExtDebugUtilsExtension, Handle, HasBuilder};
 use types::resource_handle::{Resource, ResourceHandle};
-use crate::application::gfx::device::{Device, DeviceCtx};
-use crate::application::window::{WindowCtx};
+use crate::core::gfx::device::{Device, DeviceCtx};
+use crate::core::window::{WindowCtx};
 use crate::engine::{EngineCtx};
 
 pub(crate) const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
@@ -24,7 +24,7 @@ pub struct Instance {
     engine: EngineCtx,
     instance: vulkanalia::Instance,
     device: Resource<Device>,
-    self_ctx: InstanceCtx
+    self_ctx: InstanceCtx,
 }
 
 pub type InstanceCtx = ResourceHandle<Instance>;
@@ -190,7 +190,11 @@ impl Instance {
     }
 
 
-    pub fn get_or_create_device(&mut self, ctx: WindowCtx) -> DeviceCtx {
+    pub fn get_device(&mut self) -> &Resource<Device> {
+        &self.device
+    }
+
+    pub fn create_device(&mut self, ctx: WindowCtx) -> DeviceCtx {
         if self.device.is_valid() {
             return self.device.handle();
         }

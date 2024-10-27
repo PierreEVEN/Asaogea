@@ -1,12 +1,12 @@
-use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::application::gfx::resources::buffer::{BufferMemory, BufferType};
-use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
-use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
-use crate::application::gfx::resources::mesh::Mesh;
-use crate::application::gfx::resources::pipeline::{AlphaMode, Pipeline, PipelineConfig};
-use crate::application::gfx::resources::sampler::Sampler;
-use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
-use crate::application::gfx::swapchain::SwapchainCtx;
+use crate::core::gfx::command_buffer::{CommandBuffer, Scissors};
+use crate::core::gfx::resources::buffer::{BufferMemory, BufferType};
+use crate::core::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
+use crate::core::gfx::resources::image::{Image, ImageCreateOptions};
+use crate::core::gfx::resources::mesh::Mesh;
+use crate::core::gfx::resources::pipeline::{AlphaMode, Pipeline, PipelineConfig};
+use crate::core::gfx::resources::sampler::Sampler;
+use crate::core::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
+use crate::core::gfx::swapchain::SwapchainCtx;
 use crate::assets::gltf_importer::gltf_importer::GltfImporter;
 use crate::test_app::camera::Camera;
 use anyhow::Error;
@@ -21,7 +21,7 @@ use winit::keyboard::{Key, NamedKey, SmolStr};
 use job_sys::{Job, JobSystem};
 use types::resource_handle::Resource;
 use types::rwarc::RwArc;
-use crate::application::gfx::frame_graph::frame_graph_instance::RenderPassObject;
+use crate::core::gfx::frame_graph::frame_graph_instance::RenderPassObject;
 
 const PIXEL: &str = r#"
 struct VSInput {

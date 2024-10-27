@@ -3,15 +3,17 @@ use tracing::{error};
 use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-use types::resource_handle::{Resource, ResourceHandle};
-use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::frame_graph::frame_graph_definition::FrameGraph;
-use crate::application::gfx::surface::{Surface, SurfaceCtx};
-use crate::application::gfx::swapchain::{Swapchain, SwapchainCtx};
-use crate::application::input_manager::InputManager;
+use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
+use crate::core::gfx::frame_graph::frame_graph_definition::{Renderer};
+use crate::core::gfx::imgui::ImGui;
+use crate::core::gfx::surface::{Surface, SurfaceCtx};
+use crate::core::gfx::swapchain::{Swapchain, SwapchainCtx};
+use crate::core::input_manager::InputManager;
 use crate::engine::{EngineCtx};
 use crate::options::{WindowOptions};
 
+pub type WindowCtx = ResourceHandle<AppWindow>;
+pub type WindowCtxMut = ResourceHandleMut<AppWindow>;
 pub struct AppWindow {
     minimized: bool,
 
@@ -20,10 +22,8 @@ pub struct AppWindow {
     window: Option<Window>,
     engine: EngineCtx,
     input_manager: InputManager,
-
     self_ctx: ResourceHandle<AppWindow>,
 }
-pub type WindowCtx = ResourceHandle<AppWindow>;
 
 impl AppWindow {}
 
@@ -47,25 +47,30 @@ impl AppWindow {
         Ok(window)
     }
 
-    pub fn init_swapchain(&mut self, ctx: DeviceCtx, frame_graph: FrameGraph) -> Result<(), Error> {
-        self.swapchain = Swapchain::new(ctx, self.self_ctx.clone())?;
-        self.swapchain.create_renderer(frame_graph);
+    pub fn init_swapchain(&mut self) {
+        self.swapchain = Swapchain::new(self.engine.instance().device(), self.self_ctx.clone()).unwrap();
+    }
+
+    pub fn set_renderer(&mut self, renderer: Renderer) -> Result<(), Error> {
+        self.swapchain.set_renderer(renderer);
         Ok(())
     }
 
     pub fn engine(&self) -> &EngineCtx {
         &self.engine
     }
-    
+
     pub fn window_event(&mut self, _: &ActiveEventLoop, event: WindowEvent) -> Result<(), Error> {
         self.input_manager.consume_event(&event);
         match event {
             WindowEvent::RedrawRequested => {
                 if !self.minimized {
                     self.input_manager.begin_frame();
-                    if let Err(err) = self.swapchain.render() {
-                        error!("Failed to render frame : {}", err);
-                    };
+                    if self.swapchain.is_valid() {
+                        if let Err(err) = self.swapchain.render() {
+                            error!("Failed to render frame : {}", err);
+                        };
+                    }
                 }
             }
             WindowEvent::Resized(size) => {

@@ -1,24 +1,24 @@
-use crate::application::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::application::gfx::resources::buffer::{BufferMemory, BufferType};
-use crate::application::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
-use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
-use crate::application::gfx::resources::mesh::Mesh;
-use crate::application::gfx::resources::pipeline::AlphaMode;
-use crate::application::gfx::resources::pipeline::{Pipeline, PipelineConfig};
-use crate::application::gfx::resources::sampler::Sampler;
-use crate::application::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
-use crate::application::gfx::swapchain::SwapchainCtx;
+use crate::core::gfx::command_buffer::{CommandBuffer, Scissors};
+use crate::core::gfx::frame_graph::frame_graph_instance::RenderPassObject;
+use crate::core::gfx::resources::buffer::{BufferMemory, BufferType};
+use crate::core::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
+use crate::core::gfx::resources::image::{Image, ImageCreateOptions};
+use crate::core::gfx::resources::mesh::Mesh;
+use crate::core::gfx::resources::pipeline::AlphaMode;
+use crate::core::gfx::resources::pipeline::{Pipeline, PipelineConfig};
+use crate::core::gfx::resources::sampler::Sampler;
+use crate::core::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
+use crate::core::gfx::swapchain::SwapchainCtx;
 use anyhow::Error;
-use imgui::sys::{igCreateContext, igEndFrame, igGetDrawData, igGetIO, igGetMainViewport, igGetStyle, igNewFrame, igRender, igSetCurrentContext, igShowDemoWindow, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImGuiContext, ImVec2, ImVec4};
+use imgui::sys::{igEndFrame, igGetDrawData, igGetIO, igGetMainViewport, igGetStyle, igNewFrame, igRender, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImVec2, ImVec4};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::ffi::c_char;
 use std::ptr::null_mut;
 use std::sync::RwLock;
+use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
 use vulkanalia::vk::ImageType;
 use winit::event::MouseButton;
-use types::resource_handle::{Resource, ResourceHandle};
-use crate::application::gfx::frame_graph::frame_graph_instance::RenderPassObject;
 
 const PIXEL: &str = r#"
 struct VSInput {
@@ -67,7 +67,8 @@ pub struct ImGui {
     _font_texture: Resource<Image>,
     _sampler: Sampler,
     ctx: SwapchainCtx,
-    context: *const ImGuiContext
+    context: Option<imgui::SuspendedContext>,
+
 }
 
 pub struct ImGuiPushConstants {
@@ -76,6 +77,36 @@ pub struct ImGuiPushConstants {
     _translate_x: f32,
     _translate_y: f32,
 }
+
+pub struct GlobalImGui {
+    imgui: ImGui,
+    
+    
+    
+}
+impl GlobalImGui {
+    pub fn ui(&self) -> &mut imgui::Ui {
+        
+    };
+    
+    pub fn begin(&self) {
+        
+    }
+    
+    pub fn next(&self) {
+        
+    }
+}
+
+pub static IMGUI: GlobalImGui = GlobalImGui {
+    
+    
+    
+    
+    
+};
+
+
 
 impl ImGui {
     pub fn new(ctx: SwapchainCtx, render_pass: &ResourceHandle<RenderPassObject>) -> Result<Self, Error> {
@@ -137,9 +168,9 @@ impl ImGui {
             line_width: 1.0,
         })?;
 
-        let context = unsafe { igCreateContext(null_mut()) };
-        unsafe { igSetCurrentContext(context) }
 
+
+        let mut context = imgui::Context::create();
 
         let io = unsafe { &mut *igGetIO() };
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard as i32;
@@ -205,6 +236,7 @@ impl ImGui {
             (ShaderInstanceBinding::SampledImage(*font_texture.view()?, *font_texture.layout()), 0),
             (ShaderInstanceBinding::Sampler(*sampler.ptr()), 1),
         ])?;
+
         Ok(Self {
             _compiler: compiler,
             mesh: RwLock::new(mesh),
@@ -213,12 +245,14 @@ impl ImGui {
             _font_texture: font_texture,
             _sampler: sampler,
             ctx,
-            context,
+            context: Some(context.suspend()),
         })
     }
 
-    pub fn render(&self, command_buffer: &CommandBuffer) -> Result<(), Error> {
-        unsafe { igSetCurrentContext(self.context.cast_mut()) }
+
+    pub fn begin(&mut self) -> Result<(), Error> {
+        let context = self.context.take().unwrap().activate().unwrap();
+
 
         let io = unsafe { &mut *igGetIO() };
 
@@ -240,7 +274,12 @@ impl ImGui {
 
         unsafe { igNewFrame(); }
 
-        unsafe { igShowDemoWindow(null_mut()); }
+        self.context = Some(context.suspend());
+        Ok(())
+    }
+
+    pub fn end(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
+        let context = self.context.take().unwrap().activate().unwrap();
 
 
         unsafe { igEndFrame(); }
@@ -322,7 +361,7 @@ impl ImGui {
                             w: (pcmd.ClipRect.w - clip_off.y) * clip_scale.y,
                         };
 
-                        if clip_rect.x < window_data.width()? as f32 && clip_rect.y < window_data.height()? as f32 && clip_rect.z >= 0.0 && clip_rect.w >= 0.0
+                        if clip_rect.x < self.ctx.window().width()? as f32 && clip_rect.y < self.ctx.window().height()? as f32 && clip_rect.z >= 0.0 && clip_rect.w >= 0.0
                         {
                             // Negative offsets are illegal for vkCmdSetScissor
                             if clip_rect.x < 0.0 {
@@ -357,6 +396,9 @@ impl ImGui {
             global_idx_offset += cmd.IdxBuffer.Size as u32;
             global_vtx_offset += cmd.VtxBuffer.Size as u32;
         }
+
+        self.context = Some(context.suspend());
+
         Ok(())
     }
 }

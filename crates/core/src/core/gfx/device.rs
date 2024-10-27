@@ -3,20 +3,20 @@ use std::collections::{HashMap};
 use std::mem::MaybeUninit;
 use std::rc::Rc;
 use std::sync::{RwLock};
-use anyhow::{Error};
-use tracing::{info};
+use anyhow::{anyhow, Error};
+use tracing::{info, warn};
 use vulkanalia::{vk};
 use vulkanalia::vk::{DeviceV1_0, FenceCreateFlags, HasBuilder};
 use winit::window::WindowId;
-use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
-use crate::application::gfx::command_buffer::CommandPool;
-use crate::application::gfx::descriptor_pool::DescriptorPool;
-use crate::application::gfx::frame_graph::frame_graph_instance::{RenderPassName, RenderPassObject};
-use crate::application::gfx::frame_graph::frame_graph_definition::RenderPass;
-use crate::application::gfx::instance::{GfxConfig, InstanceCtx};
-use crate::application::gfx::physical_device::PhysicalDevice;
-use crate::application::gfx::queues::{QueueFlag, Queues};
-use crate::application::gfx::surface::{SurfaceCtx};
+use types::resource_handle::{Resource, ResourceHandle};
+use crate::core::gfx::command_buffer::CommandPool;
+use crate::core::gfx::descriptor_pool::DescriptorPool;
+use crate::core::gfx::frame_graph::frame_graph_instance::{RenderPassObject};
+use crate::core::gfx::frame_graph::frame_graph_definition::{RenderPass, RenderPassName};
+use crate::core::gfx::instance::{GfxConfig, InstanceCtx};
+use crate::core::gfx::physical_device::PhysicalDevice;
+use crate::core::gfx::queues::{QueueFlag, Queues};
+use crate::core::gfx::surface::{SurfaceCtx};
 
 #[derive(Default)]
 pub struct Fence {
@@ -81,7 +81,8 @@ pub struct Device {
     descriptor_pool: MaybeUninit<DescriptorPool>,
     command_pool: HashMap<QueueFlag, Rc<CommandPool>>,
     queues: Queues,
-    render_passes: RwLock<Vec<Resource<RenderPassObject>>>,
+    present_passes: RwLock<HashMap<WindowId, Resource<RenderPassObject>>>,
+    render_passes: RwLock<HashMap<String, Resource<RenderPassObject>>>,
     self_ref: DeviceCtx,
 
     pending_kill_resources: RwLock<Vec<HashMap<WindowId, Vec<Box<dyn Any>>>>>,
@@ -118,7 +119,7 @@ impl Device {
         let features = vk::PhysicalDeviceFeatures::builder();
 
         let layers = if config.validation_layers {
-            vec![crate::application::gfx::instance::VALIDATION_LAYER.as_ptr()]
+            vec![crate::core::gfx::instance::VALIDATION_LAYER.as_ptr()]
         } else {
             Vec::new()
         };
@@ -142,7 +143,8 @@ impl Device {
             queues,
             device,
             instance: ctx.clone(),
-            render_passes: RwLock::new(vec![]),
+            present_passes: RwLock::new(HashMap::new()),
+            render_passes: RwLock::new(HashMap::new()),
             self_ref: Default::default(),
             pending_kill_resources: Default::default(),
         });
@@ -212,19 +214,38 @@ impl Device {
         locks.clear();
     }
 
-    pub fn find_or_create_render_pass_by_name(&self, name: &RenderPassName) -> ResourceHandleMut<RenderPassObject> {
-        let render_pass = RenderPassObject::new(self.self_ref.clone(), base);
-        let handle = render_pass.handle_mut();
-        self.render_passes.write().unwrap().push(render_pass);
-        handle
+    pub fn declare_render_pass(&self, render_pass: RenderPass) -> Result<RenderPassName, Error> {
+        assert!(!(render_pass.color_attachments.is_empty() && render_pass.depth_attachment.is_none()));
+        match &render_pass.name {
+            RenderPassName::Present(window) => {
+                if self.present_passes.read().unwrap().contains_key(&window.id()?) {
+                    return Err(anyhow!("Present pass for window {:?} already exists", window.id()));
+                }
+                self.present_passes.write().unwrap().insert(window.id()?, RenderPassObject::new(self.self_ref.clone(), &render_pass));
+            }
+            RenderPassName::Named(name) => {
+                if self.render_passes.read().unwrap().contains_key(name) {
+                    warn!("Render pass {name} already exists");
+                    return Ok(render_pass.name);
+                }
+                self.render_passes.write().unwrap().insert(name.clone(), RenderPassObject::new(self.self_ref.clone(), &render_pass));
+            }
+        }
+        Ok(render_pass.name)
     }
-    
-    pub fn find_or_create_render_pass(&self, base: &RenderPass) -> ResourceHandleMut<RenderPassObject> {
-        let render_pass = RenderPassObject::new(self.self_ref.clone(), base);
-        let handle = render_pass.handle_mut();
-        self.render_passes.write().unwrap().push(render_pass);
-        handle
+
+
+    pub fn find_render_pass(&self, render_pass: &RenderPassName) -> Result<ResourceHandle<RenderPassObject>, Error> {
+        Ok(match &render_pass {
+            RenderPassName::Present(window) => {
+                self.present_passes.read().unwrap().get(&window.id()?).ok_or(anyhow!("Cannot find present pass for window {:?}", window.id()?))?.handle()
+            }
+            RenderPassName::Named(name) => {
+                self.render_passes.read().unwrap().get(name).ok_or(anyhow!("Cannot find render pass for window {name}"))?.handle()
+            }
+        })
     }
+
 
     pub fn ptr(&self) -> &vulkanalia::Device {
         &self.device
@@ -246,6 +267,7 @@ impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
             self.render_passes.write().unwrap().clear();
+            self.present_passes.write().unwrap().clear();
             self.pending_kill_resources.write().unwrap().clear();
             self.command_pool.clear();
             self.descriptor_pool.assume_init_read();

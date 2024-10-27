@@ -1,9 +1,9 @@
-use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::resources::shader_module::ShaderStage;
+use crate::core::gfx::device::DeviceCtx;
+use crate::core::gfx::resources::shader_module::ShaderStage;
 use anyhow::Error;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, ShaderStageFlags};
-use crate::application::gfx::frame_graph::frame_graph_instance::RenderPassObject;
+use crate::core::gfx::frame_graph::frame_graph_instance::RenderPassObject;
 
 pub struct Pipeline {
     pipeline_layout: vk::PipelineLayout,

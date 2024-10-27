@@ -1,6 +1,6 @@
-use crate::application::gfx::device::{DeviceCtx, Fence};
-use crate::application::gfx::instance::InstanceCtx;
-use crate::application::gfx::surface::Surface;
+use crate::core::gfx::device::{DeviceCtx, Fence};
+use crate::core::gfx::instance::InstanceCtx;
+use crate::core::gfx::surface::Surface;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

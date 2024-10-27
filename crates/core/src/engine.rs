@@ -9,10 +9,10 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
 use types::resource_handle::{Resource, ResourceHandle};
 use types::time_delta::TimeDelta;
-use crate::application::gfx::frame_graph::frame_graph_definition::{FrameGraph, RenderPass, RenderPassAttachment, RenderTarget};
-use crate::application::gfx::instance::{GfxConfig, Instance, InstanceCtx};
+use crate::application::Application;
+use crate::core::gfx::instance::{GfxConfig, Instance, InstanceCtx};
 use crate::options::{Options, WindowOptions};
-use crate::application::window::{AppWindow, WindowCtx};
+use crate::core::window::{AppWindow, WindowCtx};
 
 pub struct Engine {
     windows: HashMap<WindowId, Resource<AppWindow>>,
@@ -23,12 +23,14 @@ pub struct Engine {
     delta_time: TimeDelta,
     current_frame: usize,
     current_rendering_window: WindowId,
+
+    application: Box<dyn Application>,
 }
 
 pub type EngineCtx = ResourceHandle<Engine>;
 
 impl Engine {
-    pub fn new(options: Options) -> Result<Resource<Self>, Error> {
+    pub fn new<T: 'static + Application + Default>(options: Options) -> Result<Resource<Self>, Error> {
         let mut config = GfxConfig {
             validation_layers: true,
             required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
@@ -42,6 +44,7 @@ impl Engine {
             delta_time: Default::default(),
             current_frame: 0,
             current_rendering_window: WindowId::dummy(),
+            application: Box::new(T::default()),
         });
         data.self_ref = data.handle();
         data.instance = Instance::new(data.handle(), &mut config)?;
@@ -61,42 +64,22 @@ impl Engine {
     pub fn params(&self) -> &Options {
         &self.options
     }
-    
+
     pub fn create_window(&mut self, event_loop: &ActiveEventLoop, options: &WindowOptions) -> Result<WindowCtx, Error> {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
         let mut window = AppWindow::new(self.self_ref.clone(), event_loop, options)?;
-        let device = self.instance.get_or_create_device(window.handle());
 
-        let forward_pass = RenderPass {
-            color_attachments: vec![RenderPassAttachment {
-                clear_value: Default::default(),
-                source: RenderTarget::Internal(vk::Format::R16G16B16A16_SFLOAT)
-            }],
-            depth_attachment: Some(RenderPassAttachment {
-                clear_value: Default::default(),
-                source: RenderTarget::Internal(vk::Format::D32_SFLOAT),
-            }),
-            children: vec![],
-        };
+        if !self.instance.get_device().is_valid() {
+            let device = self.instance.create_device(window.handle());
+            self.application.instantiate(&device);
+        }
+        window.init_swapchain();
 
-        let present_pass = RenderPass {
-            color_attachments: vec![RenderPassAttachment {
-                clear_value: Default::default(),
-                source: RenderTarget::Window(window.handle())
-            }],
-            depth_attachment: None,
-            children: vec![forward_pass],
-        };
-
-        let frame_graph = FrameGraph {
-            present_pass,
-        };
-
-        window.init_swapchain(device, frame_graph)?;
-        let handle = window.handle();
+        let mut handle = window.handle_mut();
         self.windows.insert(window.handle().id()?, window);
-        Ok(handle)
+        self.application.create_window(&mut handle);
+        Ok(handle.as_ref())
     }
 
     pub fn current_frame(&self) -> usize {
@@ -106,7 +89,7 @@ impl Engine {
     pub fn current_rendering_window(&self) -> WindowId {
         self.current_rendering_window
     }
-    
+
     pub fn render_frame(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
         self.delta_time.next();
         // Draw all windows (sequentially, no need to parallelize this work for now)
@@ -158,7 +141,7 @@ impl ApplicationHandler for Engine {
         match event {
             WindowEvent::CloseRequested => {
                 self.windows.remove(&id);
-                
+
                 // Request redraw for next frame
                 if let Some(window) = self.windows.values().next() {
                     window.ptr().unwrap().request_redraw();

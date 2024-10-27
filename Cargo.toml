@@ -11,9 +11,11 @@ resolver = "2"
 
 [dependencies]
 core = {path = "crates/core"}
+types = {path = "crates/types"}
 
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 anyhow = "1.0.89"
-
-rayon = "1.10.0"
+vulkanalia = { version = "0.25.0" }
+glam = "0.29.0"
+imgui = "0.12.0"

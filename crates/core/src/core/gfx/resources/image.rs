@@ -1,13 +1,13 @@
-use crate::application::gfx::command_buffer::CommandBuffer;
-use crate::application::gfx::device::{DeviceCtx, Fence};
-use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferCreateInfo, BufferMemory};
+use crate::core::gfx::command_buffer::CommandBuffer;
+use crate::core::gfx::device::{DeviceCtx, Fence};
+use crate::core::gfx::resources::buffer::{Buffer, BufferAccess, BufferCreateInfo, BufferMemory};
 use anyhow::{anyhow, Error};
 use image::{ColorType, DynamicImage, EncodableLayout};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
 use vulkanalia_vma::Alloc;
 use types::resource_handle::Resource;
-use crate::application::gfx::queues::QueueFlag;
+use crate::core::gfx::queues::QueueFlag;
 
 pub struct Image {
     image: Option<vk::Image>,

@@ -1,4 +1,4 @@
-use crate::application::gfx::instance::InstanceCtx;
+use crate::core::gfx::instance::InstanceCtx;
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
 use vulkanalia::vk::{HasBuilder, KhrSurfaceExtension, KhrWin32SurfaceExtension, SurfaceKHR, HINSTANCE};

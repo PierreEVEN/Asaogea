@@ -1,4 +1,4 @@
-use crate::application::gfx::device::DeviceCtx;
+use crate::core::gfx::device::DeviceCtx;
 use anyhow::Error;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};

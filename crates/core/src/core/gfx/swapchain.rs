@@ -1,14 +1,14 @@
-use crate::application::gfx::device::{DeviceCtx, Fence};
-use crate::application::gfx::frame_graph::frame_graph_instance::{FrameGraphInstance, FrameGraphTargetInstance};
-use crate::application::gfx::frame_graph::frame_graph_definition::FrameGraph;
-use crate::application::window::WindowCtx;
+use crate::core::gfx::device::{DeviceCtx, Fence};
+use crate::core::gfx::frame_graph::frame_graph_instance::{RendererInstance, FrameGraphTargetInstance};
+use crate::core::gfx::frame_graph::frame_graph_definition::{RenderPassName, Renderer};
+use crate::core::window::WindowCtx;
 use anyhow::{anyhow, Error};
 use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, ImageView, KhrSwapchainExtension};
-use crate::application::gfx::imgui::ImGui;
-use crate::application::gfx::physical_device::SwapchainSupport;
-use crate::application::gfx::queues::QueueFlag;
+use crate::core::gfx::imgui::ImGui;
+use crate::core::gfx::physical_device::SwapchainSupport;
+use crate::core::gfx::queues::QueueFlag;
 
 pub type SwapchainCtx = ResourceHandle<Swapchain>;
 
@@ -33,7 +33,7 @@ pub struct Swapchain {
     image_available_semaphores: Vec<Resource<vk::Semaphore>>,
     in_flight_fences: Vec<Resource<Fence>>,
 
-    frame_graph: Resource<FrameGraphInstance>,
+    renderer: Resource<RendererInstance>,
 
     device: DeviceCtx,
     window: WindowCtx,
@@ -43,6 +43,11 @@ pub struct Swapchain {
     self_ctx: SwapchainCtx,
 
     pub imgui: Option<ImGui>,
+}
+
+pub struct FrameData {
+    pub frame_index: usize,
+    pub target_index: usize,
 }
 
 impl Swapchain {
@@ -59,7 +64,7 @@ impl Swapchain {
             swapchain_image_views: vec![],
             image_available_semaphores: vec![],
             in_flight_fences: vec![],
-            frame_graph: Resource::default(),
+            renderer: Resource::default(),
             device,
             window: window_ctx,
             surface_format: surface_format.format,
@@ -70,10 +75,10 @@ impl Swapchain {
         Ok(swapchain)
     }
 
-    pub fn create_renderer(&mut self, frame_graph: FrameGraph) {
+    pub fn set_renderer(&mut self, renderer: Renderer) {
         self.create_or_recreate_swapchain().unwrap();
-        self.frame_graph = FrameGraphInstance::new(self.device.clone(), frame_graph, FrameGraphTargetInstance::Swapchain(self.self_ctx.clone()));
-        self.imgui = Some(ImGui::new(self.self_ctx.clone(), self.frame_graph.present_pass().render_pass_object()).unwrap())
+        self.renderer = RendererInstance::new(self.device.clone(), renderer, FrameGraphTargetInstance::Swapchain(self.self_ctx.clone()));
+        self.imgui = Some(ImGui::new(self.self_ctx.clone(), self.renderer.present_pass().render_pass_object()).unwrap())
     }
 
     pub fn create_or_recreate_swapchain(&mut self) -> Result<(), Error> {
@@ -158,8 +163,8 @@ impl Swapchain {
             }
         }
 
-        if self.frame_graph.is_valid() {
-            self.frame_graph.resize();
+        if self.renderer.is_valid() {
+            self.renderer.resize();
         }
         Ok(())
     }
@@ -218,7 +223,6 @@ impl Swapchain {
         let device = &self.device;
         let device_vulkan = device.device();
 
-
         self.in_flight_fences[current_frame].wait();
 
         self.device.free_resources_for_window(self.window.id()?, current_frame);
@@ -229,11 +233,14 @@ impl Swapchain {
             Err(vk::ErrorCode::OUT_OF_DATE_KHR) => { return Ok(true) }
             Err(e) => return Err(anyhow!("Failed to acquire next image : {}", e)),
         };
-
-        self.frame_graph.draw(image_index, current_frame);
+        
+        self.renderer.draw(&FrameData {
+            frame_index: current_frame,
+            target_index: image_index,
+        });
 
         // Present
-        let signal_semaphores = vec![self.frame_graph.present_pass().render_finished_semaphore(image_index)];
+        let signal_semaphores = vec![self.renderer.present_pass().render_finished_semaphore(image_index)];
         let swapchains = vec![swapchain];
         let image_indices = vec![image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()

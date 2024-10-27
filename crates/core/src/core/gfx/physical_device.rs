@@ -3,9 +3,9 @@ use anyhow::{anyhow, Error};
 use tracing::{info, warn};
 use vulkanalia::vk;
 use vulkanalia::vk::{InstanceV1_0, KhrSurfaceExtension};
-use crate::application::gfx::instance::{GfxConfig, InstanceCtx};
-use crate::application::gfx::queues::{QueueFlag, Queues};
-use crate::application::gfx::surface::Surface;
+use crate::core::gfx::instance::{GfxConfig, InstanceCtx};
+use crate::core::gfx::queues::{QueueFlag, Queues};
+use crate::core::gfx::surface::Surface;
 
 pub struct PhysicalDevice {
     physical_device: vk::PhysicalDevice,

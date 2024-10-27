@@ -1,4 +1,4 @@
-use crate::application::gfx::device::DeviceCtx;
+use crate::core::gfx::device::DeviceCtx;
 use anyhow::{anyhow, Error};
 use std::sync::RwLock;
 use vulkanalia::vk;

@@ -1,5 +1,5 @@
-use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::resources::buffer::{Buffer, BufferAccess, BufferCreateInfo, BufferMemory, BufferType};
+use crate::core::gfx::device::DeviceCtx;
+use crate::core::gfx::resources::buffer::{Buffer, BufferAccess, BufferCreateInfo, BufferMemory, BufferType};
 use anyhow::{anyhow, Error};
 use vulkanalia::vk;
 

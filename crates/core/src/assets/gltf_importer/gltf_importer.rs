@@ -1,5 +1,5 @@
-use crate::application::gfx::resources::buffer::BufferMemory;
-use crate::application::gfx::resources::mesh::IndexBufferType;
+use crate::core::gfx::resources::buffer::BufferMemory;
+use crate::core::gfx::resources::mesh::IndexBufferType;
 use anyhow::{anyhow, Error};
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;

@@ -1,12 +1,12 @@
-use crate::application::gfx::command_buffer::{CommandBuffer, Scissors, Viewport};
-use crate::application::gfx::device::DeviceCtx;
-use crate::application::gfx::frame_graph::frame_graph_definition::{ClearValues, FrameGraph, RenderPass, RenderTarget};
-use crate::application::gfx::resources::image::{Image, ImageCreateOptions};
-use crate::application::gfx::swapchain::SwapchainCtx;
+use crate::core::gfx::command_buffer::{CommandBuffer, Scissors, Viewport};
+use crate::core::gfx::device::DeviceCtx;
+use crate::core::gfx::frame_graph::frame_graph_definition::{ClearValues, RenderPass, RenderPassName, RenderTarget, Renderer, RendererStage};
+use crate::core::gfx::resources::image::{Image, ImageCreateOptions};
+use crate::core::gfx::swapchain::{FrameData, SwapchainCtx};
 use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, HasBuilder};
-use crate::application::gfx::queues::QueueFlag;
+use crate::core::gfx::queues::QueueFlag;
 
 pub enum FrameGraphTargetInstance {
     Swapchain(SwapchainCtx),
@@ -42,15 +42,15 @@ impl AttachmentInstance {
 }
 
 
-pub struct FrameGraphInstance {
+pub struct RendererInstance {
     present_pass: Resource<RenderPassInstance>,
 }
 
-impl FrameGraphInstance {
-    pub fn new(ctx: DeviceCtx, base: FrameGraph, target: FrameGraphTargetInstance) -> Resource<Self> {
-        let render_pass_object = ctx.find_or_create_render_pass(&base.present_pass);
+impl RendererInstance {
+    pub fn new(ctx: DeviceCtx, base: Renderer, target: FrameGraphTargetInstance) -> Resource<Self> {
+        let render_pass_object = ctx.find_render_pass(&base.present_stage.name).unwrap();
         Resource::new(Self {
-            present_pass: render_pass_object.instantiate(target)
+            present_pass: render_pass_object.instantiate(base.present_stage, target)
         })
     }
 
@@ -58,19 +58,13 @@ impl FrameGraphInstance {
         self.present_pass.resize();
     }
 
-    pub fn draw(&self, target_index: usize, image_index: usize) {
-        self.present_pass.draw(target_index, image_index);
+    pub fn draw(&mut self, data: &FrameData) {
+        self.present_pass.draw(data);
     }
 
     pub fn present_pass(&self) -> &RenderPassInstance {
         &self.present_pass
     }
-}
-
-#[derive(Hash, Eq, PartialEq, Clone)]
-pub enum RenderPassName {
-    Present,
-    Named(String)
 }
 
 pub struct RenderPassObject {
@@ -92,7 +86,13 @@ impl RenderPassObject {
         for attachment in &base.color_attachments
         {
             let (present_pass, format) = match &attachment.source {
-                RenderTarget::Window(window) => { (true, window.swapchain().format()) }
+                RenderTarget::Window => {
+                    if let RenderPassName::Present(window) = &base.name {
+                        (true, window.swapchain().format())
+                    } else {
+                        panic!("Invalid render pass name")
+                    }
+                }
                 RenderTarget::Image(image) => { (false, image.format()) }
                 RenderTarget::Internal(format) => { (false, *format) }
             };
@@ -133,7 +133,7 @@ impl RenderPassObject {
             Some(attachment) => {
                 let attachment_index: u32 = attachment_descriptions.len() as u32;
                 let format = match &attachment.source {
-                    RenderTarget::Window(_) => { panic!("Swapchain doesn't support depth target") }
+                    RenderTarget::Window => { panic!("Swapchain doesn't support depth target") }
                     RenderTarget::Image(image) => { image.format() }
                     RenderTarget::Internal(format) => { *format }
                 };
@@ -211,7 +211,7 @@ impl RenderPassObject {
         &self.render_pass
     }
 
-    fn instantiate(&self, target: FrameGraphTargetInstance) -> Resource<RenderPassInstance> {
+    fn instantiate(&self, mut stage: RendererStage, target: FrameGraphTargetInstance) -> Resource<RenderPassInstance> {
         let mut children = vec![];
 
         let draw_res = match &target {
@@ -221,23 +221,24 @@ impl RenderPassObject {
         };
 
         let (framebuffer_count, image_count) = match &target {
-            FrameGraphTargetInstance::Swapchain(swapchain) => {(swapchain.get_swapchain_images().len(), swapchain.get_swapchain_images().len() - 1)}
-            FrameGraphTargetInstance::Image(images) => {(images.len(), images.len())}
-            FrameGraphTargetInstance::Internal(attachments) => {(attachments[0].images.len(), attachments[0].images.len()) }
+            FrameGraphTargetInstance::Swapchain(swapchain) => { (swapchain.get_swapchain_images().len(), swapchain.get_swapchain_images().len() - 1) }
+            FrameGraphTargetInstance::Image(images) => { (images.len(), images.len()) }
+            FrameGraphTargetInstance::Internal(attachments) => { (attachments[0].images.len(), attachments[0].images.len()) }
         };
 
+        for stage in stage.dependencies {
+            let child = self.ctx.find_render_pass(&stage.name).unwrap();
 
-        for child in &self.base.children {
             let mut attachments = vec![];
 
-            for color in &child.color_attachments {
+            for color in &child.base.color_attachments {
                 let format = match color.source {
                     RenderTarget::Internal(format) => { format }
                     _ => panic!("Only internal formats are allowed for children targets")
                 };
                 attachments.push(AttachmentInstance::new(&self.ctx, format, false, image_count as u32, draw_res));
             }
-            if let Some(depth) = &child.depth_attachment {
+            if let Some(depth) = &child.base.depth_attachment {
                 let format = match depth.source {
                     RenderTarget::Internal(format) => { format }
                     _ => panic!("Only internal formats are allowed for children targets")
@@ -245,8 +246,9 @@ impl RenderPassObject {
                 attachments.push(AttachmentInstance::new(&self.ctx, format, true, image_count as u32, draw_res));
             }
 
-            children.push(self.ctx.find_or_create_render_pass(child).instantiate(FrameGraphTargetInstance::Internal(attachments)));
+            children.push(child.instantiate(stage, FrameGraphTargetInstance::Internal(attachments)));
         }
+        stage.dependencies = vec![];
 
         let mut instance = Resource::new(RenderPassInstance {
             framebuffers: vec![],
@@ -254,6 +256,7 @@ impl RenderPassObject {
             ctx: self.ctx.clone(),
             object: self.self_ctx.clone(),
             current_draw_res: draw_res,
+            stage,
             target,
             self_ctx: Default::default(),
         });
@@ -280,8 +283,9 @@ pub struct RenderPassInstance {
     object: ResourceHandle<RenderPassObject>,
     ctx: DeviceCtx,
     current_draw_res: Extent2D,
+    stage: RendererStage,
     target: FrameGraphTargetInstance,
-    self_ctx: ResourceHandle<RenderPassInstance>
+    self_ctx: ResourceHandle<RenderPassInstance>,
 }
 
 impl RenderPassInstance {
@@ -311,14 +315,14 @@ impl RenderPassInstance {
         self.framebuffers[image_index].render_finished_semaphore
     }
 
-    fn draw(&self, target_index: usize, frame_index: usize) {
-        for child in &*self.children {
-            child.draw(frame_index, frame_index);
+    fn draw(&mut self, data: &FrameData) {
+        for child in &mut *self.children {
+            child.draw(data);
         }
 
         let device = &self.ctx;
 
-        let framebuffer = &self.framebuffers[target_index];
+        let framebuffer = &self.framebuffers[data.target_index];
 
 
         // Begin buffer
@@ -386,12 +390,11 @@ impl RenderPassInstance {
         });
 
         // Draw content
-        // todo!();
+        (self.stage.render_callback)();
 
-        if let FrameGraphTargetInstance::Swapchain(parent_swapchain) = &self.target {
-            parent_swapchain.imgui.as_ref().unwrap().render(&framebuffer.command_buffer).unwrap();
+        if let FrameGraphTargetInstance::Swapchain(parent_swapchain) = &mut self.target {
+            parent_swapchain.imgui.as_mut().unwrap().end(&framebuffer.command_buffer).unwrap();
         };
-
 
         // End pass
         unsafe { device.device().cmd_end_render_pass(*framebuffer.command_buffer.ptr().unwrap()); }
@@ -403,12 +406,12 @@ impl RenderPassInstance {
         let mut signal_fence = None;
 
         if let FrameGraphTargetInstance::Swapchain(swapchain) = &self.target {
-            wait_semaphores.push(*swapchain.get_image_available_semaphore(frame_index));
-            signal_fence = Some(swapchain.get_in_flight_fence(frame_index));
+            wait_semaphores.push(*swapchain.get_image_available_semaphore(data.frame_index));
+            signal_fence = Some(swapchain.get_in_flight_fence(data.frame_index));
         }
 
         for child in &self.children {
-            wait_semaphores.push(child.framebuffers[frame_index].render_finished_semaphore);
+            wait_semaphores.push(child.framebuffers[data.frame_index].render_finished_semaphore);
         }
 
         let wait_stages = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT; wait_semaphores.len()];
