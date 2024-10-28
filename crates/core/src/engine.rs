@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ptr::{null};
 use std::time::Duration;
 use anyhow::{Error};
 use tracing::{error};
@@ -7,12 +8,15 @@ use winit::application::ApplicationHandler;
 use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
-use types::resource_handle::{Resource, ResourceHandle};
+use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
 use types::time_delta::TimeDelta;
 use crate::application::Application;
 use crate::core::gfx::instance::{GfxConfig, Instance, InstanceCtx};
 use crate::options::{Options, WindowOptions};
-use crate::core::window::{AppWindow, WindowCtx};
+use crate::core::window::{AppWindow, WindowCtxMut};
+
+static mut ENGINE: Option<ResourceHandleMut<Engine>> = None;
+
 
 pub struct Engine {
     windows: HashMap<WindowId, Resource<AppWindow>>,
@@ -23,11 +27,13 @@ pub struct Engine {
     delta_time: TimeDelta,
     current_frame: usize,
     current_rendering_window: WindowId,
+    event_loop: *const ActiveEventLoop,
 
     application: Box<dyn Application>,
 }
 
 pub type EngineCtx = ResourceHandle<Engine>;
+pub type EngineCtxMut = ResourceHandleMut<Engine>;
 
 impl Engine {
     pub fn new<T: 'static + Application + Default>(options: Options) -> Result<Resource<Self>, Error> {
@@ -44,11 +50,21 @@ impl Engine {
             delta_time: Default::default(),
             current_frame: 0,
             current_rendering_window: WindowId::dummy(),
+            event_loop: null(),
             application: Box::new(T::default()),
         });
         data.self_ref = data.handle();
         data.instance = Instance::new(data.handle(), &mut config)?;
+        unsafe { ENGINE = Some(data.handle_mut()); }
         Ok(data)
+    }
+
+    pub fn get() -> &'static Self {
+        unsafe { ENGINE.as_ref().unwrap() }
+    }
+
+    pub fn get_mut() -> &'static mut Self {
+        unsafe { ENGINE.as_mut().unwrap() }
     }
 
     pub fn instance(&self) -> InstanceCtx {
@@ -65,21 +81,28 @@ impl Engine {
         &self.options
     }
 
-    pub fn create_window(&mut self, event_loop: &ActiveEventLoop, options: &WindowOptions) -> Result<WindowCtx, Error> {
+    pub fn create_window(&mut self, options: &WindowOptions) -> Result<WindowCtxMut, Error> {
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
-        let mut window = AppWindow::new(self.self_ref.clone(), event_loop, options)?;
+        let mut window = AppWindow::new(self.self_ref.clone(), unsafe { self.event_loop.as_ref().unwrap() }, options)?;
 
+        let mut created_device = false;
         if !self.instance.get_device().is_valid() {
-            let device = self.instance.create_device(window.handle());
-            self.application.instantiate(&device);
+            self.instance.create_device(window.handle());
+            created_device = true;
         }
         window.init_swapchain();
 
         let mut handle = window.handle_mut();
+
         self.windows.insert(window.handle().id()?, window);
+
+        if created_device {
+            self.application.instantiate(&mut handle);
+        }
         self.application.create_window(&mut handle);
-        Ok(handle.as_ref())
+
+        Ok(handle)
     }
 
     pub fn current_frame(&self) -> usize {
@@ -114,30 +137,18 @@ impl Engine {
 
 impl ApplicationHandler for Engine {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.event_loop = event_loop as *const ActiveEventLoop;
         let window_options = self.options.clone();
-        match self.create_window(event_loop, &window_options.main_window) {
+        match self.create_window(&window_options.main_window) {
             Ok(_) => {}
             Err(err) => {
                 error!("Failed to create window : {}", err);
             }
         };
-
-        match self.create_window(event_loop, &window_options.main_window) {
-            Ok(_) => {}
-            Err(err) => {
-                error!("Failed to create secondary window : {}", err);
-            }
-        };
-
-        match self.create_window(event_loop, &window_options.main_window) {
-            Ok(_) => {}
-            Err(err) => {
-                error!("Failed to create secondary window : {}", err);
-            }
-        };
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        self.event_loop = event_loop as *const ActiveEventLoop;
         match event {
             WindowEvent::CloseRequested => {
                 self.windows.remove(&id);
@@ -169,5 +180,6 @@ impl Drop for Engine {
     fn drop(&mut self) {
         self.windows.clear();
         self.instance = Resource::default();
+        unsafe { ENGINE = None; }
     }
 }

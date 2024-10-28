@@ -11,7 +11,7 @@ use winit::window::WindowId;
 use types::resource_handle::{Resource, ResourceHandle};
 use crate::core::gfx::command_buffer::CommandPool;
 use crate::core::gfx::descriptor_pool::DescriptorPool;
-use crate::core::gfx::frame_graph::frame_graph_instance::{RenderPassObject};
+use crate::core::gfx::frame_graph::renderer::{RenderPassObject};
 use crate::core::gfx::frame_graph::frame_graph_definition::{RenderPass, RenderPassName};
 use crate::core::gfx::instance::{GfxConfig, InstanceCtx};
 use crate::core::gfx::physical_device::PhysicalDevice;

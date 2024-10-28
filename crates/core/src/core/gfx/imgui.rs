@@ -1,5 +1,6 @@
 use crate::core::gfx::command_buffer::{CommandBuffer, Scissors};
-use crate::core::gfx::frame_graph::frame_graph_instance::RenderPassObject;
+use crate::core::gfx::device::DeviceCtx;
+use crate::core::gfx::frame_graph::renderer::RenderPassObject;
 use crate::core::gfx::resources::buffer::{BufferMemory, BufferType};
 use crate::core::gfx::resources::descriptor_sets::{DescriptorSets, ShaderInstanceBinding};
 use crate::core::gfx::resources::image::{Image, ImageCreateOptions};
@@ -8,16 +9,18 @@ use crate::core::gfx::resources::pipeline::AlphaMode;
 use crate::core::gfx::resources::pipeline::{Pipeline, PipelineConfig};
 use crate::core::gfx::resources::sampler::Sampler;
 use crate::core::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
-use crate::core::gfx::swapchain::SwapchainCtx;
+use crate::core::window::WindowCtx;
 use anyhow::Error;
-use imgui::sys::{igEndFrame, igGetDrawData, igGetIO, igGetMainViewport, igGetStyle, igNewFrame, igRender, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImVec2, ImVec4};
+use imgui::internal::RawCast;
+use imgui::sys::{igGetIO, igGetMainViewport, igGetStyle, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImVec2, ImVec4};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::ffi::c_char;
+use std::ops::{Deref, DerefMut};
 use std::ptr::null_mut;
-use std::sync::RwLock;
+use std::sync::{Mutex, MutexGuard, RwLock};
 use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
-use vulkanalia::vk::ImageType;
+use vulkanalia::vk::{Extent2D, ImageType};
 use winit::event::MouseButton;
 
 const PIXEL: &str = r#"
@@ -66,10 +69,12 @@ pub struct ImGui {
     descriptor_sets: DescriptorSets,
     _font_texture: Resource<Image>,
     _sampler: Sampler,
-    ctx: SwapchainCtx,
-    context: Option<imgui::SuspendedContext>,
-
+    window_ctx: RwLock<WindowCtx>,
+    context: RwLock<Option<imgui::SuspendedContext>>,
+    ui: Mutex<*mut imgui::Ui>,
+    self_ref: ResourceHandle<ImGui>
 }
+
 
 pub struct ImGuiPushConstants {
     _scale_x: f32,
@@ -78,44 +83,47 @@ pub struct ImGuiPushConstants {
     _translate_y: f32,
 }
 
-pub struct GlobalImGui {
-    imgui: ImGui,
-    
-    
-    
+pub struct ActiveContext {
+    imgui: ResourceHandle<ImGui>,
+    context: imgui::Context
 }
-impl GlobalImGui {
-    pub fn ui(&self) -> &mut imgui::Ui {
-        
-    };
-    
-    pub fn begin(&self) {
-        
-    }
-    
-    pub fn next(&self) {
-        
+
+static mut IMGUI_ACTIVE_CONTEXT: Option<Mutex<Resource<ActiveContext>>> = None;
+
+pub fn initialize_imgui() {
+    unsafe {
+        if IMGUI_ACTIVE_CONTEXT.is_none() {
+            IMGUI_ACTIVE_CONTEXT = Some(Mutex::new(Resource::default()));
+        }
     }
 }
 
-pub static IMGUI: GlobalImGui = GlobalImGui {
-    
-    
-    
-    
-    
-};
+pub struct UiPtr<'a> {
+    _imgui: MutexGuard<'a, Resource<ActiveContext>>,
+    ptr: *mut imgui::Ui,
+}
 
+impl<'a> Deref for UiPtr<'a> {
+    type Target = imgui::Ui;
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.ptr.as_ref().unwrap() }
+    }
+}
 
+impl<'a> DerefMut for UiPtr<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.ptr.as_mut().unwrap() }
+    }
+}
 
 impl ImGui {
-    pub fn new(ctx: SwapchainCtx, render_pass: &ResourceHandle<RenderPassObject>) -> Result<Self, Error> {
+    pub fn new(ctx: DeviceCtx, render_res: Extent2D, render_pass: &ResourceHandle<RenderPassObject>) -> Result<Resource<Self>, Error> {
         let mut compiler = HlslCompiler::new()?;
 
         let vertex = compiler.compile(&RawShaderDefinition::new("imgui-vertex", "vs_6_0", PIXEL.to_string()))?;
         let fragment = compiler.compile(&RawShaderDefinition::new("imgui-fragment", "ps_6_0", FRAGMENT.to_string()))?;
 
-        let vertex = ShaderStage::new(ctx.device().clone(), &vertex.raw(), ShaderStageInfos {
+        let vertex = ShaderStage::new(ctx.clone(), &vertex.raw(), ShaderStageInfos {
             descriptor_bindings: vec![],
             push_constant_size: Some(size_of::<ImGuiPushConstants>() as u32),
             stage_input: vec![
@@ -140,7 +148,7 @@ impl ImGui {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: "main".to_string(),
         })?;
-        let fragment = ShaderStage::new(ctx.device().clone(), &fragment.raw(),
+        let fragment = ShaderStage::new(ctx.clone(), &fragment.raw(),
                                         ShaderStageInfos {
                                             descriptor_bindings: vec![
                                                 ShaderStageBindings {
@@ -158,7 +166,7 @@ impl ImGui {
                                         })?;
 
 
-        let pipeline = Pipeline::new(ctx.device().clone(), &render_pass, vec![vertex, fragment], &PipelineConfig {
+        let pipeline = Pipeline::new(ctx.clone(), &render_pass, vec![vertex, fragment], &PipelineConfig {
             culling: vk::CullModeFlags::NONE,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
@@ -169,8 +177,7 @@ impl ImGui {
         })?;
 
 
-
-        let mut context = imgui::Context::create();
+        let context = imgui::Context::create();
 
         let io = unsafe { &mut *igGetIO() };
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard as i32;
@@ -211,7 +218,7 @@ impl ImGui {
         unsafe { ImFontAtlas_GetTexDataAsRGBA32(io.Fonts, &mut pixels, &mut width, &mut height, null_mut()) }
         let data_size = width * height * 4i32;
 
-        let mut font_texture = Image::new(ctx.device().clone(), ImageCreateOptions {
+        let mut font_texture = Image::new(ctx.clone(), ImageCreateOptions {
             image_type: ImageType::_2D,
             format: vk::Format::R8G8B8A8_UNORM,
             usage: vk::ImageUsageFlags::SAMPLED,
@@ -224,70 +231,116 @@ impl ImGui {
 
         font_texture.set_data(&BufferMemory::from_raw(pixels as *const u8, 1, data_size as usize))?;
 
-        let mesh = Mesh::new(size_of::<ImDrawVert>(), ctx.device().clone(), BufferType::Immediate)?;
+        let mesh = Mesh::new(size_of::<ImDrawVert>(), ctx.clone(), BufferType::Immediate)?;
 
         //unsafe { (&mut *io.Fonts).TexID = font_texture.__static_view_handle() as ImTextureID; }
 
-        let mut desc_set = DescriptorSets::new(ctx.device().clone(), pipeline.descriptor_set_layout())?;
+        let mut desc_set = DescriptorSets::new(ctx.clone(), pipeline.descriptor_set_layout())?;
 
-        let sampler = Sampler::new(ctx.device().clone())?;
+        let sampler = Sampler::new(ctx.clone())?;
 
         desc_set.update(vec![
             (ShaderInstanceBinding::SampledImage(*font_texture.view()?, *font_texture.layout()), 0),
             (ShaderInstanceBinding::Sampler(*sampler.ptr()), 1),
         ])?;
 
-        Ok(Self {
+        let mut imgui = Resource::new(Self {
             _compiler: compiler,
             mesh: RwLock::new(mesh),
             pipeline,
             descriptor_sets: desc_set,
             _font_texture: font_texture,
             _sampler: sampler,
-            ctx,
-            context: Some(context.suspend()),
-        })
+            window_ctx: Default::default(),
+            context: RwLock::new(Some(context.suspend())),
+            ui: Mutex::new(null_mut()),
+            self_ref: Default::default(),
+        });
+        imgui.self_ref = imgui.handle();
+        imgui.begin(render_res)?;
+
+        Ok(imgui)
     }
 
+    pub fn set_target_window_for_inputs(&self, window: WindowCtx) {
+        *self.window_ctx.write().unwrap() = window;
+    }
 
-    pub fn begin(&mut self) -> Result<(), Error> {
-        let context = self.context.take().unwrap().activate().unwrap();
+    pub fn ui<'a>(&self) -> UiPtr<'a> {
+        unsafe {
+            UiPtr {
+                _imgui: self.activate(),
+                ptr: self.ui.lock().unwrap().as_mut().unwrap(),
+            }
+        }
+    }
+
+    fn begin(&self, render_res: Extent2D) -> Result<(), Error> {
+        let mut context = self.activate();
 
 
         let io = unsafe { &mut *igGetIO() };
 
-        let window_data = self.ctx.window();
+        io.DisplaySize = ImVec2 { x: render_res.width as f32, y: render_res.height as f32 };
+        let window_ctx = self.window_ctx.read().unwrap();
+        if window_ctx.is_valid() {
+            io.DisplayFramebufferScale = ImVec2 { x: 1.0, y: 1.0 };
+            io.DeltaTime = f32::max(window_ctx.engine().delta_time().as_secs_f32(), 0.0000000001f32);
 
-        io.DisplaySize = ImVec2 { x: window_data.width()? as f32, y: window_data.height()? as f32 };
-        io.DisplayFramebufferScale = ImVec2 { x: 1.0, y: 1.0 };
-        io.DeltaTime = f32::max(window_data.engine().delta_time().as_secs_f32(), 0.0000000001f32);
+            // Update mouse
+            io.MouseDown[0] = window_ctx.input_manager().is_mouse_button_pressed(&MouseButton::Left);
+            io.MouseDown[1] = window_ctx.input_manager().is_mouse_button_pressed(&MouseButton::Right);
+            io.MouseDown[2] = window_ctx.input_manager().is_mouse_button_pressed(&MouseButton::Middle);
+            io.MouseDown[3] = window_ctx.input_manager().is_mouse_button_pressed(&MouseButton::Other(0));
+            io.MouseDown[4] = window_ctx.input_manager().is_mouse_button_pressed(&MouseButton::Other(1));
+            let mouse_pos = window_ctx.input_manager().mouse_position();
+            io.MouseHoveredViewport = 0;
+            io.MousePos = ImVec2 { x: mouse_pos.x as f32, y: mouse_pos.y as f32 };
+        }
 
-        // Update mouse
-        io.MouseDown[0] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Left);
-        io.MouseDown[1] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Right);
-        io.MouseDown[2] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Middle);
-        io.MouseDown[3] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Other(0));
-        io.MouseDown[4] = window_data.input_manager().is_mouse_button_pressed(&MouseButton::Other(1));
-        let mouse_pos = window_data.input_manager().mouse_position();
-        io.MouseHoveredViewport = 0;
-        io.MousePos = ImVec2 { x: mouse_pos.x as f32, y: mouse_pos.y as f32 };
-
-        unsafe { igNewFrame(); }
-
-        self.context = Some(context.suspend());
+        let ui = context.context.new_frame() as *mut imgui::Ui;
+        self.suspend(context);
+        *self.ui.lock().unwrap() = ui;
         Ok(())
     }
 
-    pub fn end(&mut self, command_buffer: &CommandBuffer) -> Result<(), Error> {
-        let context = self.context.take().unwrap().activate().unwrap();
+    fn activate<'a>(&self) -> MutexGuard<'a, Resource<ActiveContext>> {
+        let mut current_active_context = unsafe { IMGUI_ACTIVE_CONTEXT.as_ref().unwrap().lock().unwrap()};
+        // Suspend potential existing context
+        if current_active_context.is_valid() && current_active_context.imgui != self.self_ref {
+            let old_context = current_active_context.take();
+            *old_context.imgui.context.write().unwrap() = Some(old_context.context.suspend());
+        }
+        // Activate current context if not already activated
+        if !current_active_context.is_valid() {
+            *current_active_context = Resource::new(ActiveContext {
+                imgui: self.self_ref.clone(),
+                context: self.context.write().unwrap().take().unwrap().activate().unwrap(),
+            })
+        }
 
+        current_active_context
+    }
 
-        unsafe { igEndFrame(); }
-        unsafe { igRender(); }
-        let draw_data = unsafe { &*igGetDrawData() };
+    fn suspend(&self, mut context: MutexGuard<Resource<ActiveContext>>) {
+        assert!(context.imgui == self.self_ref);
+        if context.is_valid() {
+            let imgui = context.imgui.clone();
+            *imgui.context.write().unwrap() = Some(context.take().context.suspend());
+        }
+    }
+
+    pub fn submit_frame(&self, command_buffer: &CommandBuffer, render_res: Extent2D) -> Result<(), Error> {
+
+        let mut context = self.activate();
+
+        let render_result = context.context.render();
+        let draw_data = unsafe { render_result.raw() };
         let width = draw_data.DisplaySize.x * draw_data.FramebufferScale.x;
         let height = draw_data.DisplaySize.x * draw_data.FramebufferScale.x;
         if width <= 0.0 || height <= 0.0 || draw_data.TotalVtxCount == 0 {
+            self.suspend(context);
+            self.begin(render_res)?;
             return Ok(());
         }
         /*
@@ -305,7 +358,7 @@ impl ImGui {
                 let cmd_list = &**draw_data.CmdLists.offset(n as isize);
 
                 self.mesh.write().unwrap().set_indexed_vertices(vertex_start, &BufferMemory::from_raw(cmd_list.VtxBuffer.Data as *const u8, size_of::<ImDrawVert>(), cmd_list.VtxBuffer.Size as usize),
-                                               index_start, &BufferMemory::from_raw(cmd_list.IdxBuffer.Data as *const u8, size_of::<ImDrawIdx>(), cmd_list.IdxBuffer.Size as usize))?;
+                                                                index_start, &BufferMemory::from_raw(cmd_list.IdxBuffer.Data as *const u8, size_of::<ImDrawIdx>(), cmd_list.IdxBuffer.Size as usize))?;
 
                 vertex_start += cmd_list.VtxBuffer.Size as usize;
                 index_start += cmd_list.IdxBuffer.Size as usize;
@@ -361,7 +414,7 @@ impl ImGui {
                             w: (pcmd.ClipRect.w - clip_off.y) * clip_scale.y,
                         };
 
-                        if clip_rect.x < self.ctx.window().width()? as f32 && clip_rect.y < self.ctx.window().height()? as f32 && clip_rect.z >= 0.0 && clip_rect.w >= 0.0
+                        if clip_rect.x < render_res.width as f32 && clip_rect.y < render_res.height as f32 && clip_rect.z >= 0.0 && clip_rect.w >= 0.0
                         {
                             // Negative offsets are illegal for vkCmdSetScissor
                             if clip_rect.x < 0.0 {
@@ -396,8 +449,9 @@ impl ImGui {
             global_idx_offset += cmd.IdxBuffer.Size as u32;
             global_vtx_offset += cmd.VtxBuffer.Size as u32;
         }
+        self.suspend(context);
 
-        self.context = Some(context.suspend());
+        self.begin(render_res)?;
 
         Ok(())
     }

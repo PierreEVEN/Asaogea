@@ -21,7 +21,7 @@ use winit::keyboard::{Key, NamedKey, SmolStr};
 use job_sys::{Job, JobSystem};
 use types::resource_handle::Resource;
 use types::rwarc::RwArc;
-use crate::core::gfx::frame_graph::frame_graph_instance::RenderPassObject;
+use crate::core::gfx::frame_graph::renderer::RenderPassObject;
 
 const PIXEL: &str = r#"
 struct VSInput {

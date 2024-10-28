@@ -1,14 +1,13 @@
 use crate::core::gfx::device::{DeviceCtx, Fence};
-use crate::core::gfx::frame_graph::frame_graph_instance::{RendererInstance, FrameGraphTargetInstance};
-use crate::core::gfx::frame_graph::frame_graph_definition::{RenderPassName, Renderer};
+use crate::core::gfx::frame_graph::frame_graph_definition::Renderer;
+use crate::core::gfx::frame_graph::renderer::{FrameGraphTargetInstance, RendererInstance};
+use crate::core::gfx::physical_device::SwapchainSupport;
+use crate::core::gfx::queues::QueueFlag;
 use crate::core::window::WindowCtx;
 use anyhow::{anyhow, Error};
 use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, ImageView, KhrSwapchainExtension};
-use crate::core::gfx::imgui::ImGui;
-use crate::core::gfx::physical_device::SwapchainSupport;
-use crate::core::gfx::queues::QueueFlag;
 
 pub type SwapchainCtx = ResourceHandle<Swapchain>;
 
@@ -41,13 +40,10 @@ pub struct Swapchain {
     surface_format: vk::Format,
 
     self_ctx: SwapchainCtx,
-
-    pub imgui: Option<ImGui>,
 }
 
 pub struct FrameData {
     pub frame_index: usize,
-    pub target_index: usize,
 }
 
 impl Swapchain {
@@ -69,7 +65,6 @@ impl Swapchain {
             window: window_ctx,
             surface_format: surface_format.format,
             self_ctx: SwapchainCtx::default(),
-            imgui: None,
         });
         swapchain.self_ctx = swapchain.handle();
         Ok(swapchain)
@@ -78,7 +73,6 @@ impl Swapchain {
     pub fn set_renderer(&mut self, renderer: Renderer) {
         self.create_or_recreate_swapchain().unwrap();
         self.renderer = RendererInstance::new(self.device.clone(), renderer, FrameGraphTargetInstance::Swapchain(self.self_ctx.clone()));
-        self.imgui = Some(ImGui::new(self.self_ctx.clone(), self.renderer.present_pass().render_pass_object()).unwrap())
     }
 
     pub fn create_or_recreate_swapchain(&mut self) -> Result<(), Error> {
@@ -205,6 +199,10 @@ impl Swapchain {
         Ok(())
     }
 
+    pub fn renderer(&self) -> ResourceHandle<RendererInstance> {
+        self.renderer.handle()
+    }
+
     pub fn render(&mut self) -> Result<(), Error> {
         let should_be_resized = self.render_internal()?;
         if should_be_resized {
@@ -218,8 +216,12 @@ impl Swapchain {
     }
 
     fn render_internal(&mut self) -> Result<bool, Error> {
+        if self.swapchain.is_none() {
+            return Ok(false);
+        }
         let current_frame = self.window.engine().current_frame();
-        let swapchain = self.swapchain.ok_or(anyhow!("Swapchain is not valid. Maybe you forget to call Swapchain::create_or_recreate()"))?;
+        
+        let swapchain = self.swapchain.unwrap();
         let device = &self.device;
         let device_vulkan = device.device();
 
@@ -233,11 +235,10 @@ impl Swapchain {
             Err(vk::ErrorCode::OUT_OF_DATE_KHR) => { return Ok(true) }
             Err(e) => return Err(anyhow!("Failed to acquire next image : {}", e)),
         };
-        
+
         self.renderer.draw(&FrameData {
             frame_index: current_frame,
-            target_index: image_index,
-        });
+        }, image_index);
 
         // Present
         let signal_semaphores = vec![self.renderer.present_pass().render_finished_semaphore(image_index)];

@@ -1,8 +1,7 @@
-use vulkanalia::vk;
-use types::resource_handle::ResourceHandle;
-use crate::core::gfx::frame_graph::frame_graph_instance::FrameGraphTargetInstance;
 use crate::core::gfx::resources::image::Image;
 use crate::core::window::WindowCtx;
+use types::resource_handle::ResourceHandle;
+use vulkanalia::vk;
 
 #[derive(Clone)]
 pub enum RenderPassName {
@@ -73,6 +72,7 @@ impl RenderPass {
 
 pub struct Renderer {
     pub present_stage: RendererStage,
+    pub name: String
 }
 
 pub struct RendererStage {

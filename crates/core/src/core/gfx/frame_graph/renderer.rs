@@ -1,12 +1,13 @@
 use crate::core::gfx::command_buffer::{CommandBuffer, Scissors, Viewport};
 use crate::core::gfx::device::DeviceCtx;
 use crate::core::gfx::frame_graph::frame_graph_definition::{ClearValues, RenderPass, RenderPassName, RenderTarget, Renderer, RendererStage};
+use crate::core::gfx::imgui::{ImGui, UiPtr};
+use crate::core::gfx::queues::QueueFlag;
 use crate::core::gfx::resources::image::{Image, ImageCreateOptions};
 use crate::core::gfx::swapchain::{FrameData, SwapchainCtx};
 use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, HasBuilder};
-use crate::core::gfx::queues::QueueFlag;
 
 pub enum FrameGraphTargetInstance {
     Swapchain(SwapchainCtx),
@@ -44,22 +45,50 @@ impl AttachmentInstance {
 
 pub struct RendererInstance {
     present_pass: Resource<RenderPassInstance>,
+    imgui: Resource<ImGui>,
 }
 
 impl RendererInstance {
     pub fn new(ctx: DeviceCtx, base: Renderer, target: FrameGraphTargetInstance) -> Resource<Self> {
         let render_pass_object = ctx.find_render_pass(&base.present_stage.name).unwrap();
-        Resource::new(Self {
-            present_pass: render_pass_object.instantiate(base.present_stage, target)
-        })
+
+        let render_res = match &target {
+            FrameGraphTargetInstance::Swapchain(swapchain) => {
+                Extent2D {
+                    width: swapchain.window().width().unwrap(),
+                    height: swapchain.window().height().unwrap(),
+                }
+            }
+            FrameGraphTargetInstance::Image(images) => { images[0].res() }
+            FrameGraphTargetInstance::Internal(_) => { panic!("Invalild target") }
+        };
+
+        let imgui = ImGui::new(ctx.clone(), render_res, &render_pass_object).unwrap();
+
+        if let FrameGraphTargetInstance::Swapchain(swapchain) = &target {
+            imgui.set_target_window_for_inputs(swapchain.window().clone());
+        }
+
+        let mut renderer = Resource::new(Self {
+            present_pass: Default::default(),
+            imgui,
+        });
+        renderer.present_pass = render_pass_object.instantiate(base.present_stage, target, renderer.handle());
+
+
+        renderer
     }
 
     pub fn resize(&mut self) {
         self.present_pass.resize();
     }
 
-    pub fn draw(&mut self, data: &FrameData) {
-        self.present_pass.draw(data);
+    pub fn draw(&mut self, data: &FrameData, target_index: usize) {
+        self.present_pass.draw(data, target_index);
+    }
+
+    pub fn ui<'a>(&self) -> UiPtr<'a> {
+        self.imgui.ui()
     }
 
     pub fn present_pass(&self) -> &RenderPassInstance {
@@ -211,7 +240,7 @@ impl RenderPassObject {
         &self.render_pass
     }
 
-    fn instantiate(&self, mut stage: RendererStage, target: FrameGraphTargetInstance) -> Resource<RenderPassInstance> {
+    fn instantiate(&self, mut stage: RendererStage, target: FrameGraphTargetInstance, renderer: ResourceHandle<RendererInstance>) -> Resource<RenderPassInstance> {
         let mut children = vec![];
 
         let draw_res = match &target {
@@ -246,7 +275,7 @@ impl RenderPassObject {
                 attachments.push(AttachmentInstance::new(&self.ctx, format, true, image_count as u32, draw_res));
             }
 
-            children.push(child.instantiate(stage, FrameGraphTargetInstance::Internal(attachments)));
+            children.push(child.instantiate(stage, FrameGraphTargetInstance::Internal(attachments), renderer.clone()));
         }
         stage.dependencies = vec![];
 
@@ -257,6 +286,7 @@ impl RenderPassObject {
             object: self.self_ctx.clone(),
             current_draw_res: draw_res,
             stage,
+            renderer,
             target,
             self_ctx: Default::default(),
         });
@@ -284,6 +314,7 @@ pub struct RenderPassInstance {
     ctx: DeviceCtx,
     current_draw_res: Extent2D,
     stage: RendererStage,
+    renderer: ResourceHandle<RendererInstance>,
     target: FrameGraphTargetInstance,
     self_ctx: ResourceHandle<RenderPassInstance>,
 }
@@ -315,14 +346,14 @@ impl RenderPassInstance {
         self.framebuffers[image_index].render_finished_semaphore
     }
 
-    fn draw(&mut self, data: &FrameData) {
+    fn draw(&mut self, data: &FrameData, target_index: usize) {
         for child in &mut *self.children {
-            child.draw(data);
+            child.draw(data, data.frame_index);
         }
 
         let device = &self.ctx;
 
-        let framebuffer = &self.framebuffers[data.target_index];
+        let framebuffer = &self.framebuffers[target_index];
 
 
         // Begin buffer
@@ -392,9 +423,16 @@ impl RenderPassInstance {
         // Draw content
         (self.stage.render_callback)();
 
-        if let FrameGraphTargetInstance::Swapchain(parent_swapchain) = &mut self.target {
-            parent_swapchain.imgui.as_mut().unwrap().end(&framebuffer.command_buffer).unwrap();
-        };
+        // Todo : have a flag for final passes
+        match &self.target {
+            FrameGraphTargetInstance::Swapchain(_) => {
+                self.renderer.imgui.submit_frame(&framebuffer.command_buffer, self.current_draw_res).unwrap();
+            }
+            FrameGraphTargetInstance::Image(_) => {
+                self.renderer.imgui.submit_frame(&framebuffer.command_buffer, self.current_draw_res).unwrap();
+            }
+            FrameGraphTargetInstance::Internal(_) => {}
+        }
 
         // End pass
         unsafe { device.device().cmd_end_render_pass(*framebuffer.command_buffer.ptr().unwrap()); }

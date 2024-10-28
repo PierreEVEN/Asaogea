@@ -8,6 +8,7 @@ use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::vk::{DebugUtilsMessengerEXT, DeviceV1_0, EntryV1_0, ExtDebugUtilsExtension, Handle, HasBuilder};
 use types::resource_handle::{Resource, ResourceHandle};
 use crate::core::gfx::device::{Device, DeviceCtx};
+use crate::core::gfx::imgui::{initialize_imgui};
 use crate::core::window::{WindowCtx};
 use crate::engine::{EngineCtx};
 
@@ -103,6 +104,9 @@ impl Instance {
             self_ctx: Default::default(),
         });
         instance.self_ctx = instance.handle();
+        
+        initialize_imgui();
+        
         Ok(instance)
     }
 
@@ -190,7 +194,7 @@ impl Instance {
     }
 
 
-    pub fn get_device(&mut self) -> &Resource<Device> {
+    pub fn get_device(&self) -> &Resource<Device> {
         &self.device
     }
 

@@ -5,7 +5,6 @@ use winit::event_loop::{ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
 use crate::core::gfx::frame_graph::frame_graph_definition::{Renderer};
-use crate::core::gfx::imgui::ImGui;
 use crate::core::gfx::surface::{Surface, SurfaceCtx};
 use crate::core::gfx::swapchain::{Swapchain, SwapchainCtx};
 use crate::core::input_manager::InputManager;

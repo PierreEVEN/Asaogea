@@ -1,2 +1,2 @@
-pub mod frame_graph_instance;
+pub mod renderer;
 pub mod frame_graph_definition;

@@ -224,3 +224,54 @@ impl Drop for ResourceAlloc {
         }
     }
 }
+
+impl<T> Eq for Resource<T> {}
+impl<T> Eq for ResourceHandle<T> {}
+impl<T> Eq for ResourceHandleMut<T> {}
+impl<T> PartialEq<Self> for Resource<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.is_valid() && other.is_valid() && self.data == other.data
+    }
+}
+impl<T> PartialEq<ResourceHandle<T>> for Resource<T> {
+    fn eq(&self, other: &ResourceHandle<T>) -> bool {
+        self.is_valid() && other.is_valid() && self.data == other.ptr
+    }
+}
+impl<T> PartialEq<ResourceHandleMut<T>> for Resource<T> {
+    fn eq(&self, other: &ResourceHandleMut<T>) -> bool {
+        self.is_valid() && other.is_valid() && self.data == other.ptr
+    }
+}
+impl<T> PartialEq<ResourceHandle<T>> for ResourceHandle<T> {
+    fn eq(&self, other: &ResourceHandle<T>) -> bool {
+        self.is_valid() && other.is_valid() && self.ptr == other.ptr
+    }
+}
+
+impl<T> PartialEq<Resource<T>> for ResourceHandle<T> {
+    fn eq(&self, other: &Resource<T>) -> bool {
+        self.is_valid() && other.is_valid() && self.ptr == other.data
+    }
+}
+impl<T> PartialEq<Resource<T>> for ResourceHandleMut<T> {
+    fn eq(&self, other: &Resource<T>) -> bool {
+        self.is_valid() && other.is_valid() && self.ptr == other.data
+    }
+}
+impl<T> PartialEq<ResourceHandleMut<T>> for ResourceHandleMut<T> {
+    fn eq(&self, other: &ResourceHandleMut<T>) -> bool {
+        self.is_valid() && other.is_valid() && self.ptr == other.ptr
+    }
+}
+
+impl<T> PartialEq<ResourceHandle<T>> for ResourceHandleMut<T> {
+    fn eq(&self, other: &ResourceHandle<T>) -> bool {
+        self.is_valid() && other.is_valid() && self.ptr == other.ptr
+    }
+}
+impl<T> PartialEq<ResourceHandleMut<T>> for ResourceHandle<T> {
+    fn eq(&self, other: &ResourceHandleMut<T>) -> bool {
+        self.is_valid() && other.is_valid() && self.ptr == other.ptr
+    }
+}
