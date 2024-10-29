@@ -1,9 +1,12 @@
+use std::ffi::c_char;
 use anyhow::Error;
+use imgui::sys::{igBegin, igEnd};
 use core::application::Application;
 use core::core::gfx::frame_graph::frame_graph_definition::*;
 use core::engine::Engine;
 use core::options::{Options, RenderingOption, WindowOptions};
 use vulkanalia::vk;
+use types::profiler::Profiler;
 
 fn main() -> Result<(), Error> {
     tracing_subscriber::fmt().init();
@@ -16,6 +19,7 @@ fn main() -> Result<(), Error> {
             name: "Asaogea".to_string()
         },
     })?;
+    Profiler::get().enable(true);
     engine.run()
 }
 
@@ -50,8 +54,6 @@ impl Application for GameTestApp {
                     },
                     RendererStage {
                         render_callback: Box::new(move || {
-                            let ui = window_ref.swapchain().renderer().ui();
-                            ui.show_demo_window(&mut true);
                         }),
                         name: RenderPassName::Named("depth_pass".to_string()),
                         dependencies: vec![],
@@ -83,7 +85,21 @@ impl Application for GameTestApp {
                     RendererStage {
                         render_callback: Box::new(move || {
                             let ui = window_ref.swapchain().renderer().ui();
-                            ui.show_demo_window(&mut true);
+
+
+                            let mut open = true;
+                            if unsafe { igBegin("coucou toto\0".as_ptr() as *const imgui::sys::cty::c_char, (&mut open) as *mut bool, 0) } {
+                                unsafe { igEnd(); }
+                            }
+
+
+
+
+
+                            println!("draw recorded data");
+                            for elem in Profiler::get().current() {
+                                println!("{} : {:?}", elem.name, elem.elapsed);
+                            }
                         }),
                         name: RenderPassName::Named("depth_pass".to_string()),
                         dependencies: vec![],
@@ -91,7 +107,7 @@ impl Application for GameTestApp {
             },
             name: format!("MAIN_WINDOW"),
         };
-        secondary_window.set_renderer(renderer).unwrap()
+        secondary_window.set_renderer(renderer).unwrap();
     }
 
     fn create_window(&mut self, _: &mut core::core::window::WindowCtxMut) {}

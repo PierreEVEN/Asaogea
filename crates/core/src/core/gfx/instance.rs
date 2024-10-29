@@ -8,7 +8,7 @@ use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::vk::{DebugUtilsMessengerEXT, DeviceV1_0, EntryV1_0, ExtDebugUtilsExtension, Handle, HasBuilder};
 use types::resource_handle::{Resource, ResourceHandle};
 use crate::core::gfx::device::{Device, DeviceCtx};
-use crate::core::gfx::imgui::{initialize_imgui};
+use crate::core::gfx::ui::imgui::initialize_imgui;
 use crate::core::window::{WindowCtx};
 use crate::engine::{EngineCtx};
 

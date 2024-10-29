@@ -1,13 +1,14 @@
 use crate::core::gfx::command_buffer::{CommandBuffer, Scissors, Viewport};
 use crate::core::gfx::device::DeviceCtx;
 use crate::core::gfx::frame_graph::frame_graph_definition::{ClearValues, RenderPass, RenderPassName, RenderTarget, Renderer, RendererStage};
-use crate::core::gfx::imgui::{ImGui, UiPtr};
 use crate::core::gfx::queues::QueueFlag;
 use crate::core::gfx::resources::image::{Image, ImageCreateOptions};
 use crate::core::gfx::swapchain::{FrameData, SwapchainCtx};
 use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, HasBuilder};
+use types::profiler::Profiler;
+use crate::core::gfx::ui::imgui::{ImGui, UiPtr};
 
 pub enum FrameGraphTargetInstance {
     Swapchain(SwapchainCtx),
@@ -347,6 +348,7 @@ impl RenderPassInstance {
     }
 
     fn draw(&mut self, data: &FrameData, target_index: usize) {
+        let record = Profiler::get().record(format!("Draw render pass").as_str());
         for child in &mut *self.children {
             child.draw(data, data.frame_index);
         }
@@ -421,8 +423,11 @@ impl RenderPassInstance {
         });
 
         // Draw content
+        let callback = Profiler::get().record("Render callback");
         (self.stage.render_callback)();
+        callback.end();
 
+        let callback = Profiler::get().record("Draw ImGui");
         // Todo : have a flag for final passes
         match &self.target {
             FrameGraphTargetInstance::Swapchain(_) => {
@@ -433,6 +438,7 @@ impl RenderPassInstance {
             }
             FrameGraphTargetInstance::Internal(_) => {}
         }
+        callback.end();
 
         // End pass
         unsafe { device.device().cmd_end_render_pass(*framebuffer.command_buffer.ptr().unwrap()); }
@@ -463,8 +469,11 @@ impl RenderPassInstance {
             .command_buffers(command_buffers.as_slice())
             .signal_semaphores(signal_semaphores.as_slice())
             .build();
+        let submit = Profiler::get().record("Submit render pass");
         let submit_infos = vec![submit_infos];
+        submit.end();
         self.ctx.queues().submit(&QueueFlag::Graphic, submit_infos.as_slice(), signal_fence);
+        record.end();
     }
 }
 

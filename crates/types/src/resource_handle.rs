@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::null;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub struct Resource<T> {
+pub struct Resource<T: ?Sized> {
     data: *const T,
     alloc: ResourceAlloc,
 }
@@ -17,7 +17,7 @@ impl<T> Default for Resource<T> {
     }
 }
 
-impl<T> Drop for Resource<T> {
+impl<T: ?Sized> Drop for Resource<T> {
     fn drop(&mut self) {
         if !self.data.is_null() {
             unsafe {

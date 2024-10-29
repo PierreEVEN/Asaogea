@@ -8,6 +8,8 @@ use winit::application::ApplicationHandler;
 use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId};
+use types::measure;
+use types::profiler::Profiler;
 use types::resource_handle::{Resource, ResourceHandle, ResourceHandleMut};
 use types::time_delta::TimeDelta;
 use crate::application::Application;
@@ -37,6 +39,7 @@ pub type EngineCtxMut = ResourceHandleMut<Engine>;
 
 impl Engine {
     pub fn new<T: 'static + Application + Default>(options: Options) -> Result<Resource<Self>, Error> {
+        Profiler::init();
         let mut config = GfxConfig {
             validation_layers: true,
             required_extensions: vec![vk::KHR_SWAPCHAIN_EXTENSION.name],
@@ -82,6 +85,7 @@ impl Engine {
     }
 
     pub fn create_window(&mut self, options: &WindowOptions) -> Result<WindowCtxMut, Error> {
+        let record = Profiler::get().record(format!("Create window {}", options.name).as_str());
         let mut attributes = WindowAttributes::default();
         attributes.title = options.name.to_string();
         let mut window = AppWindow::new(self.self_ref.clone(), unsafe { self.event_loop.as_ref().unwrap() }, options)?;
@@ -101,7 +105,7 @@ impl Engine {
             self.application.instantiate(&mut handle);
         }
         self.application.create_window(&mut handle);
-
+        record.end();
         Ok(handle)
     }
 
@@ -114,6 +118,8 @@ impl Engine {
     }
 
     pub fn render_frame(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
+        Profiler::get().new_frame();
+        let record = Profiler::get().record("Render frame");
         self.delta_time.next();
         // Draw all windows (sequentially, no need to parallelize this work for now)
         for (id, window) in &mut self.windows {
@@ -126,8 +132,11 @@ impl Engine {
 
         // Request redraw for next frame
         if let Some(window) = self.windows.values().next() {
+            let record = Profiler::get().record("Request redraw");
             window.ptr().unwrap().request_redraw();
+            record.end();
         }
+        record.end();
     }
 
     pub fn delta_time(&self) -> &Duration {
@@ -148,6 +157,7 @@ impl ApplicationHandler for Engine {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let record = Profiler::get().record("Window event");
         self.event_loop = event_loop as *const ActiveEventLoop;
         match event {
             WindowEvent::CloseRequested => {
@@ -173,6 +183,7 @@ impl ApplicationHandler for Engine {
                 }
             }
         }
+        record.end();
     }
 }
 

@@ -1,12 +1,28 @@
 use std::sync::{RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
+static mut GLOBAL_PROFILER: Option<Profiler> = None;
+
 pub struct Profiler {
     history: RwLock<Vec<Vec<RecordData>>>,
     current_frame: RwLock<Option<Vec<RecordData>>>
 }
 
 impl Profiler {
+
+    pub fn init() {
+        unsafe {
+            GLOBAL_PROFILER = Some(Profiler {
+                history: Default::default(),
+                current_frame: Default::default(),
+            })
+        }
+    }
+
+    pub fn get() -> &'static Self {
+        unsafe { GLOBAL_PROFILER.as_ref().expect("Profiler have not been initialized using Profiler::init()") }
+    }
+
     pub fn new_frame(&self) {
         let mut current = self.current_frame.write().unwrap();
         if let Some(current) = current.take() {
@@ -18,10 +34,11 @@ impl Profiler {
         *current = Some(vec![]);
     }
 
-    pub fn record(&self) -> Record {
+    pub fn record(&self, name: &str) -> Record {
         Record {
             profiler: self,
             data: Some(RecordData {
+                name: name.to_string(),
                 start: Instant::now(),
                 elapsed: Duration::default(),
             }),
@@ -40,19 +57,28 @@ impl Profiler {
         self.history.read().unwrap()
     }
 
-    pub fn current(&self) -> RwLockReadGuard<Vec<RecordData>> {
-        self.current_frame.read().unwrap().unwrap()
+    pub fn current(&self) -> Vec<RecordData> {
+        if let Some(data) = self.current_frame.read().unwrap().as_ref() {
+            data.clone()
+        } else {
+            vec![]
+        }
     }
     
     pub fn clear(&self) {
         self.history.write().unwrap().clear();
-        self.current_frame.write().unwrap().clear();
+        let mut current = self.current_frame.write().unwrap();
+        if current.is_some() {
+            *current = Some(vec![]);
+        }
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct RecordData {
-    start: Instant,
-    elapsed: Duration,
+    pub name: String,
+    pub start: Instant,
+    pub elapsed: Duration,
 }
 
 impl RecordData {
@@ -85,5 +111,15 @@ impl<'a> Drop for Record<'a> {
                 current_frame.push(data);
             }
         }
+    }
+}
+
+#[macro_export]
+macro_rules! measure {
+    ($i:expr, $content:block) => {
+        let mut profiler = types::profiler::Profiler::get().record($i);
+        let ret = $content;
+        profiler.end();
+        ret
     }
 }

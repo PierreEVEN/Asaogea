@@ -9,9 +9,10 @@ use crate::core::gfx::resources::pipeline::AlphaMode;
 use crate::core::gfx::resources::pipeline::{Pipeline, PipelineConfig};
 use crate::core::gfx::resources::sampler::Sampler;
 use crate::core::gfx::resources::shader_module::{ShaderStage, ShaderStageBindings, ShaderStageInfos, ShaderStageInputs};
+use crate::core::gfx::ui::context::{ImGuiContext, SuspendedContext};
+use crate::core::gfx::ui::ui::Ui;
 use crate::core::window::WindowCtx;
 use anyhow::Error;
-use imgui::internal::RawCast;
 use imgui::sys::{igGetIO, igGetMainViewport, igGetStyle, igStyleColorsDark, ImDrawIdx, ImDrawVert, ImFontAtlas_GetTexDataAsRGBA32, ImGuiBackendFlags_HasMouseCursors, ImGuiBackendFlags_HasSetMousePos, ImGuiBackendFlags_PlatformHasViewports, ImGuiConfigFlags_DockingEnable, ImGuiConfigFlags_NavEnableGamepad, ImGuiConfigFlags_NavEnableKeyboard, ImGuiConfigFlags_ViewportsEnable, ImVec2, ImVec4};
 use shaders::compiler::{HlslCompiler, RawShaderDefinition};
 use std::ffi::c_char;
@@ -70,9 +71,8 @@ pub struct ImGui {
     _font_texture: Resource<Image>,
     _sampler: Sampler,
     window_ctx: RwLock<WindowCtx>,
-    context: RwLock<Option<imgui::SuspendedContext>>,
-    ui: Mutex<*mut imgui::Ui>,
-    self_ref: ResourceHandle<ImGui>
+    context: RwLock<Option<SuspendedContext>>,
+    self_ref: ResourceHandle<ImGui>,
 }
 
 
@@ -85,7 +85,7 @@ pub struct ImGuiPushConstants {
 
 pub struct ActiveContext {
     imgui: ResourceHandle<ImGui>,
-    context: imgui::Context
+    context: ImGuiContext,
 }
 
 static mut IMGUI_ACTIVE_CONTEXT: Option<Mutex<Resource<ActiveContext>>> = None;
@@ -99,20 +99,19 @@ pub fn initialize_imgui() {
 }
 
 pub struct UiPtr<'a> {
-    _imgui: MutexGuard<'a, Resource<ActiveContext>>,
-    ptr: *mut imgui::Ui,
+    imgui: MutexGuard<'a, Resource<ActiveContext>>,
 }
 
 impl<'a> Deref for UiPtr<'a> {
-    type Target = imgui::Ui;
+    type Target = Ui;
     fn deref(&self) -> &Self::Target {
-        unsafe { self.ptr.as_ref().unwrap() }
+        self.imgui.context.ui()
     }
 }
 
 impl<'a> DerefMut for UiPtr<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.ptr.as_mut().unwrap() }
+        self.imgui.context.ui_mut()
     }
 }
 
@@ -176,8 +175,7 @@ impl ImGui {
             line_width: 1.0,
         })?;
 
-
-        let context = imgui::Context::create();
+        let context = ImGuiContext::new(null_mut());
 
         let io = unsafe { &mut *igGetIO() };
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard as i32;
@@ -253,7 +251,6 @@ impl ImGui {
             _sampler: sampler,
             window_ctx: Default::default(),
             context: RwLock::new(Some(context.suspend())),
-            ui: Mutex::new(null_mut()),
             self_ref: Default::default(),
         });
         imgui.self_ref = imgui.handle();
@@ -267,10 +264,11 @@ impl ImGui {
     }
 
     pub fn ui<'a>(&self) -> UiPtr<'a> {
+        let ctx = self.activate();
+
         unsafe {
             UiPtr {
-                _imgui: self.activate(),
-                ptr: self.ui.lock().unwrap().as_mut().unwrap(),
+                imgui: ctx,
             }
         }
     }
@@ -298,14 +296,13 @@ impl ImGui {
             io.MousePos = ImVec2 { x: mouse_pos.x as f32, y: mouse_pos.y as f32 };
         }
 
-        let ui = context.context.new_frame() as *mut imgui::Ui;
+        context.context.new_frame();
         self.suspend(context);
-        *self.ui.lock().unwrap() = ui;
         Ok(())
     }
 
     fn activate<'a>(&self) -> MutexGuard<'a, Resource<ActiveContext>> {
-        let mut current_active_context = unsafe { IMGUI_ACTIVE_CONTEXT.as_ref().unwrap().lock().unwrap()};
+        let mut current_active_context = unsafe { IMGUI_ACTIVE_CONTEXT.as_ref().unwrap().lock().unwrap() };
         // Suspend potential existing context
         if current_active_context.is_valid() && current_active_context.imgui != self.self_ref {
             let old_context = current_active_context.take();
@@ -315,7 +312,7 @@ impl ImGui {
         if !current_active_context.is_valid() {
             *current_active_context = Resource::new(ActiveContext {
                 imgui: self.self_ref.clone(),
-                context: self.context.write().unwrap().take().unwrap().activate().unwrap(),
+                context: self.context.write().unwrap().take().unwrap().activate(),
             })
         }
 
@@ -331,11 +328,9 @@ impl ImGui {
     }
 
     pub fn submit_frame(&self, command_buffer: &CommandBuffer, render_res: Extent2D) -> Result<(), Error> {
+        let context = self.activate();
 
-        let mut context = self.activate();
-
-        let render_result = context.context.render();
-        let draw_data = unsafe { render_result.raw() };
+        let draw_data = context.context.render();
         let width = draw_data.DisplaySize.x * draw_data.FramebufferScale.x;
         let height = draw_data.DisplaySize.x * draw_data.FramebufferScale.x;
         if width <= 0.0 || height <= 0.0 || draw_data.TotalVtxCount == 0 {

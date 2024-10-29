@@ -8,6 +8,7 @@ use anyhow::{anyhow, Error};
 use types::resource_handle::{Resource, ResourceHandle};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Extent2D, Handle, HasBuilder, Image, ImageView, KhrSwapchainExtension};
+use types::profiler::Profiler;
 
 pub type SwapchainCtx = ResourceHandle<Swapchain>;
 
@@ -204,13 +205,19 @@ impl Swapchain {
     }
 
     pub fn render(&mut self) -> Result<(), Error> {
+        let record = Profiler::get().record("Render swapchain");
         let should_be_resized = self.render_internal()?;
+        record.end();
         if should_be_resized {
+            let record = Profiler::get().record("Resize swapchain");
             self.create_or_recreate_swapchain()?;
-        }
-        let should_resize = self.render_internal()?;
-        if should_resize {
-            return Err(anyhow!("Failed to resize renderer"));
+            record.end();
+            let record = Profiler::get().record("Draw after swapchain resize");
+            let should_resize = self.render_internal()?;
+            record.end();
+            if should_resize {
+                return Err(anyhow!("Failed to resize renderer"));
+            }
         }
         Ok(())
     }
@@ -236,9 +243,11 @@ impl Swapchain {
             Err(e) => return Err(anyhow!("Failed to acquire next image : {}", e)),
         };
 
+        let record = Profiler::get().record("Run renderer");
         self.renderer.draw(&FrameData {
             frame_index: current_frame,
         }, image_index);
+        record.end();
 
         // Present
         let signal_semaphores = vec![self.renderer.present_pass().render_finished_semaphore(image_index)];
@@ -250,8 +259,9 @@ impl Swapchain {
             .image_indices(image_indices.as_slice())
             .build();
 
+        let record = Profiler::get().record("Present queue");
         let result = self.device.queues().present(&present_info);
-
+        record.end();
         if result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR) || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR) {
             return Ok(true);
         } else if let Err(e) = result {
